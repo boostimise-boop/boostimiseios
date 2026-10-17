@@ -28,12 +28,27 @@ jobs:
       - name: Build (unsigned)
         working-directory: ios
         run: |
-          set -o pipefail
+          set +e
           xcodebuild -project Boostimise.xcodeproj -scheme Boostimise -configuration Release \
             -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            build 2>&1 | tee build.log | grep -E "error:|warning: unre|BUILD (SUCCEEDED|FAILED)" || true
-          test -d build/Build/Products/Release-iphoneos/Boostimise.app
+            build > build.log 2>&1
+          status=$?
+          set -e
+          # the compiler errors, short paths, each once
+          grep -E "error:" build.log | sed -E 's#^.*/(Sources|Boostimise)/#\1/#' | sort -u > errors.txt || true
+          echo "xcodebuild exit $status, $(wc -l < errors.txt) error line(s)"
+          cat errors.txt
+          tail -25 build.log
+          # shown on the run's page (GitHub shows at most 10 of each kind per step)
+          esc() { sed -e 's/%/%25/g' -e 's/\r/%0D/g'; }
+          sed -n '1,10p' errors.txt | esc | while IFS= read -r l; do echo "::error::$l"; done
+          sed -n '11,20p' errors.txt | esc | while IFS= read -r l; do echo "::warning::$l"; done
+          sed -n '21,30p' errors.txt | esc | while IFS= read -r l; do echo "::notice::$l"; done
+          { echo '### Build errors'; echo '```'; cat errors.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          test $status -eq 0
+          # a real app has its program inside (a failed build can leave an empty .app folder)
+          test -f build/Build/Products/Release-iphoneos/Boostimise.app/Boostimise
 
       - name: Package the .ipa
         working-directory: ios

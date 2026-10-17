@@ -142,8 +142,8 @@ p{font-size:14px;color:#62748e;line-height:1.5;margin:0}.b{font-weight:700}.b sp
 a.btn{display:inline-block;margin-top:24px;background:#0a6cf0;color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600}</style></head>
 <body><main>{icon}<h1>{title}</h1><p>{text}</p>{script}<p style="margin-top:24px" class="b">Boost<span>imise</span></p></main></body></html>
 """
-    private static let okIcon = #"<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#00bc7d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>"#
-    private static let errIcon = #"<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#e7000b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>"#
+    private static let okIcon = ##"<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#00bc7d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>"##
+    private static let errIcon = ##"<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#e7000b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>"##
     private static let back = #"<a class="btn" href="boostimise://signed-in">Back to Boostimise</a>"#
     // Supabase normally answers with ?code= (PKCE); tokens in the #fragment are handed over as a query.
     private static let hashScript = "<script>if(location.hash.length>1&&!location.search){location.replace(location.pathname+'?'+location.hash.slice(1))}</script>"

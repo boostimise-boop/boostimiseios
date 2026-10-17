@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.Boostimise" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#0f1d3a</item>
+        <item name="android:navigationBarColor">#ffffff</item>
+        <item name="android:windowBackground">#f3f6fb</item>
+    </style>
+</resources>

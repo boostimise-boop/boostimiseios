@@ -1,0 +1,54 @@
+# Builds the iPhone app on GitHub's Macs (no Mac needed): Actions tab > "iOS app" > the run >
+# Artifacts > Boostimise-ipa. The .ipa is unsigned; Sideloadly (Windows) signs it with your Apple ID
+# while installing it on the iPhone (see ios/README.md).
+name: iOS app
+
+on:
+  push:
+    paths:
+      - "ios/**"
+      - "android/app/src/main/assets/**"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate the Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Build (unsigned)
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild -project Boostimise.xcodeproj -scheme Boostimise -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log | grep -E "error:|warning: unre|BUILD (SUCCEEDED|FAILED)" || true
+          test -d build/Build/Products/Release-iphoneos/Boostimise.app
+
+      - name: Package the .ipa
+        working-directory: ios
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/Boostimise.app Payload/
+          zip -qry Boostimise.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Boostimise-ipa
+          path: ios/Boostimise.ipa
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-log
+          path: ios/build.log

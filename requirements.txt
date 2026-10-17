@@ -1,0 +1,9 @@
+PySide6>=6.5
+playwright>=1.40
+Pillow>=10.0
+numpy>=2.0
+anthropic>=1.8
+rapidocr_onnxruntime>=1.3
+openvino>=2024.4
+pi-heif>=0.18
+phonenumberslite>=8.13

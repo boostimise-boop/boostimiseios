@@ -1,0 +1,22 @@
+# The Windows app's runtime data: sign-in, browser profile (WhatsApp / Pathao logins), logs
+data/
+
+# Python / Windows app build outputs
+env/
+build/
+dist/
+__pycache__/
+*.pyc
+
+# Android build outputs
+android/.gradle/
+android/.kotlin/
+android/app/build/
+android/local.properties
+
+# iOS: the Xcode project is generated from ios/project.yml
+ios/build/
+ios/Payload/
+ios/*.xcodeproj/
+ios/*.ipa
+ios/build.log

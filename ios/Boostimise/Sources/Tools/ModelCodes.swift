@@ -2,62 +2,24 @@ import Foundation
 
 /// Product codes in chat text and the codes list / result file (tools/model_detect/codes.py).
 enum ProductCodes {
-    // 5a-403, 5A-403, 5a - 403, 5a–403, 5a_403 ...
-    static let codeRx = Rx(#"(?<![0-9A-Za-z])(\d{1,3}[A-Za-z]?)\s*[-‐-―_]\s*(\d{1,5})(?![0-9A-Za-z])"#)
+    // 5a-403, 5A-403, 5a - 403, 5a_403, 5a:403 ... and the codes typed in a chat: Core/ProductCode.swift
+    static let codeRx = ProductCode.codeRx
     static let notDone: Set<String> = ["", "not found", "no image", "unknown"]
-    private static let dash = #"[-‐-―_]"#
-    private static let msgCodeRx = Rx(
-        #"(?<![0-9A-Za-z])(?<prefix>\d{1,3}[A-Za-z]?)\s*(?<sep>"# + dash + #"|[+&:])\s*(?<num>\d{1,5})(?![0-9A-Za-z])"# +
-            #"(?<more>(?:[ \t]*[+&][ \t]*(?:\k<prefix>\s*"# + dash + #"\s*)?\d{1,5}(?![0-9A-Za-z])"# +
-            #"(?![ \t]*"# + dash + #"\s*\d))*)"#, ignoreCase: true)
-    private static let moreRx = Rx(#"(?<![0-9A-Za-z])(\d+)(?![0-9A-Za-z]|[ \t]*"# + dash + #"\s*\d)"#)
-    private static let alnum = Rx(#"[0-9A-Za-z]"#)
 
-    static func norm(_ prefix: String, _ number: String) -> String { "\(prefix.lowercased())-\(Int(number) ?? 0)" }
-    static func split(_ code: String) -> (String, Int) { (code.beforeLast("-"), Int(code.afterLast("-")) ?? 0) }
+    static func norm(_ prefix: String, _ number: String) -> String { ProductCode.norm(prefix, number) }
+    static func split(_ code: String) -> (String, Int) { ProductCode.split(code) }
 
     struct M {
         let start: Int
         let end: Int
-        let prefix: String
-        let num: String
-        let more: String
     }
 
     /// The codes written in a chat message ("redmi 12 8+128" and "at 10:30" are not codes).
     static func codeMatches(_ text: String?) -> [M] {
-        let t = text ?? ""
-        let ns = t as NSString
-        var out: [M] = []
-        var pos = 0
-        while pos <= ns.length {
-            guard let m = msgCodeRx.find(t, from: pos) else { break }
-            let start = m.start
-            let nl = ns.range(of: "\n", options: .backwards, range: NSRange(location: 0, length: start))
-            let lineStart = nl.location == NSNotFound ? 0 : nl.location + 1
-            let line = ns.substring(with: NSRange(location: lineStart, length: start - lineStart))
-            let sep = m.named("sep")
-            if ["+", "&", ":"].contains(sep) && alnum.contains(line) {
-                let pr = m.namedRange("prefix")
-                pos = pr.location + pr.length
-                continue
-            }
-            out.append(M(start: start, end: m.end, prefix: m.named("prefix"), num: m.named("num"), more: m.named("more")))
-            pos = m.end
-            if m.range.length == 0 { pos += 1 }
-        }
-        return out
+        ProductCode.codeMatches(text).map { M(start: $0.start, end: $0.end) }
     }
 
-    static func codesInText(_ text: String?) -> [String] {
-        var out: [String] = []
-        for m in codeMatches(text) {
-            out.append(norm(m.prefix, m.num))
-            out += moreRx.findAll(m.more).map { norm(m.prefix, $0.group(1)) }
-        }
-        var seen = Set<String>()
-        return out.filter { seen.insert($0).inserted }
-    }
+    static func codesInText(_ text: String?) -> [String] { ProductCode.codesInText(text) }
 
     /// The text with the codes in it replaced by spaces.
     static func stripCodes(_ text: String?) -> String {

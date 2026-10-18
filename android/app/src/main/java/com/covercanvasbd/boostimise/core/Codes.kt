@@ -43,8 +43,6 @@ data class CodeItem(val code: String, val name: String = "", val date: String = 
 object Codes {
     val IMAGE_EXTS = listOf(".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".bmp")
     private val DATE_RE = Regex("(?:^|\\s)(\\d{1,2}/\\d{1,2}(?:/\\d{2,4})?)\\s*$")
-    private const val DASHES = "[-\\u2010-\\u2015]"
-    private const val JOINS = "[-\\u2010-\\u2015+&:]"
 
     fun parseCodeList(text: String): List<CodeItem> {
         val items = mutableListOf<CodeItem>()
@@ -52,7 +50,7 @@ object Codes {
             val line = raw.trim()
             if (line.isEmpty()) continue
             val first = line.replaceFirst("\t", " ")
-            val code = first.substringBefore(' ').trim()
+            val code = ProductCode.listCode(first.substringBefore(' '))
             var rest = if (' ' in first) first.substringAfter(' ') else ""
             if (code.none { it.isDigit() }) continue
             rest = Regex("\\s+").replace(rest.replace("\t", " "), " ").trim()
@@ -66,20 +64,8 @@ object Codes {
         return items
     }
 
-    private fun jsEscape(s: String) = Regex("([.*+?^\${}()|\\[\\]\\\\/])").replace(s) { "\\" + it.value }
-
-    /** Regex (valid in both Kotlin and JavaScript) matching the code as a whole token. */
-    fun codePattern(code: String): String {
-        val parts = Regex("\\s*$DASHES\\s*").split(code.trim()).filter { it.isNotEmpty() }.map { jsEscape(it) }
-        val sep = "\\s*$JOINS\\s*"
-        var body = parts.joinToString(sep)
-        if (parts.size == 2 && parts[1].all { it.isDigit() }) {
-            val prefix = parts[0] + sep
-            val plus = "[ \\t]*[+&][ \\t]*"
-            body += "|" + prefix + "\\d+(?:" + plus + "(?:" + prefix + ")?\\d+)*?" + plus + parts[1]
-        }
-        return "(?<![0-9A-Za-z])(?:$body)(?![0-9A-Za-z])"
-    }
+    /** Regex (valid in both Kotlin and JavaScript) matching a message about the code (ProductCode.codePattern). */
+    fun codePattern(code: String): String = ProductCode.codePattern(code)
 
     /** '26/9' -> 26 Sep of this year (last year if that is in the future). */
     fun listDate(text: String, now: LocalDateTime = LocalDateTime.now()): LocalDateTime? {
@@ -137,12 +123,11 @@ object Codes {
  * tools/pathao_autofill/order_parser.py. Messages are Bangla/English mixed.
  */
 object OrderParser {
-    private val LIST_LINE = re("^\\s*(\\d{1,3}[a-z]{0,2})\\s*-\\s*(\\d{1,6})\\s*$", true)
-    private val CODE_LINE = re(
-        "^\\W*(?:(?:order|code|id|অর্ডার|কোড)\\W*)?(\\d{1,3}[a-z]{0,2})\\s*[-+&:]\\s*(\\d{1,6})(?!\\d)" +
-            "((?:[ \\t]*[+&][ \\t]*(?:\\1\\s*-\\s*)?\\d{1,6}(?![\\da-z])(?![ \\t]*-\\s*\\d))*)", true)
-    private val CODE_MORE = re("(?<![\\da-z])(\\d+)(?![\\da-z]|[ \\t]*-\\s*\\d)", true)
-    private val CODE_ANY = re("(?<!\\w)\\d{1,3}[a-z]{0,2}\\s*-\\s*\\d{1,6}(?!\\d)", true)
+    private val LIST_LINE = re("^\\s*(" + ProductCode.PREFIX + ")\\s*" + ProductCode.SEP + "\\s*(\\d{1,6})[\\s+\\-]*$", true)
+    // The code at the start of a line with the codes of its list after it ("3-163+164", "2-151-152", "2:152+2-153")
+    private val CODE_LINE = re("^\\W*(?:(?:order|code|id|অর্ডার|কোড)\\W*)?" + ProductCode.CHAT_CODE, true)
+    // Any code written with a dash, with the codes after it, so its numbers are not read as the amount
+    private val CODE_ANY = re("(?<!\\w)" + ProductCode.CHAT_CODE.replaceFirst(ProductCode.SEP, ProductCode.DASH), true)
     val PHONE = re("(?<!\\d)(?:\\+?88[ -]?)?(0?1[3-9](?:[ -]?\\d){8})(?!\\d)")
     private val NAME_LABEL = re(
         "^(?:customer|receiver|recipient|কাস্টমার|গ্রাহক|প্রাপক)?(?:'s|’s|er|ের)?\\s*" +
@@ -184,8 +169,8 @@ object OrderParser {
             "sector|block|lane|area)\\b"))
     private const val EDGE_CHARS = " \t,;:|/\\-–—.।ঃ="
 
-    fun normalizeCode(prefix: String, number: String) = "${prefix.lowercase()}-${number.toInt()}"
-    fun splitCode(code: String): Pair<String, Int> = code.substringBeforeLast('-') to code.substringAfterLast('-').toInt()
+    fun normalizeCode(prefix: String, number: String) = ProductCode.norm(prefix, number)
+    fun splitCode(code: String): Pair<String, Int> = ProductCode.split(code)
 
     /** Codes of a list file, in file order, without duplicates or blank lines. */
     fun readCodeList(text: String): List<String> {
@@ -215,19 +200,18 @@ object OrderParser {
 
     private fun clean(line: String): String {
         var l = bnToAscii(line).replace('\u00a0', ' ')
-        l = Regex("[*_~`]").replace(l, "")
+        l = Regex("[*~`]|(?<!\\d)_|_(?!\\d)").replace(l, "")   // *bold* / _italic_ markers, not "2_152"
         return Regex("\\s+").replace(l, " ").trim()
     }
 
     private fun lines(text: String?) = (text ?: "").lines().map { clean(it) }.filter { it.isNotEmpty() }
 
-    /** The order codes a message starts with: ["6-872"], ["3-163", "3-164"] for "3-163+164", or []. */
+    /** The order codes a message starts with: ["6-872"], ["3-163", "3-164"] for "3-163+164" or "3-163-164", or []. */
     fun findCodes(text: String?): List<String> {
         for (line in lines(text).take(3)) {
             val m = CODE_LINE.find(line) ?: continue
             if (m.range.first != 0) continue
-            val numbers = listOf(m.groupValues[2]) + CODE_MORE.findAll(m.groupValues[3]).map { it.groupValues[1] }
-            return numbers.map { normalizeCode(m.groupValues[1], it) }.distinct()
+            return ProductCode.matchCodes(m)
         }
         return emptyList()
     }
@@ -348,7 +332,7 @@ object OrderParser {
         for ((i, line) in lines.take(3).withIndex()) {
             val m = CODE_LINE.find(line) ?: continue
             if (m.range.first != 0) continue
-            code = normalizeCode(m.groupValues[1], m.groupValues[2])
+            code = normalizeCode(m.groupValues[1], m.groupValues[3])
             codeLine = i
             break
         }

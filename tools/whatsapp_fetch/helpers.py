@@ -6,12 +6,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from core.codes import code_pattern, list_code  # noqa: F401  (code_pattern is used by the workers)
+
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".bmp")
 _DATE_RE = re.compile(r"(?:^|\s)(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\s*$")
 _BAD_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
-_DASHES = r"[-\u2010-\u2015]"
-_JOINS = r"[-\u2010-\u2015+&:]"  # what people type between the two halves of a code in a chat
 
 
 @dataclass
@@ -29,14 +29,15 @@ class CodeItem:
 
 
 def parse_code_list(text: str) -> list[CodeItem]:
-    """Parse lines like '2-558<TAB>Realme C85<TAB>26/9' (tabs or spaces)."""
+    """Parse lines like '2-558<TAB>Realme C85<TAB>26/9' (tabs or spaces). A code typed '2:558' or
+    '2_558+' is written '2-558'."""
     items = []
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
             continue
         code, _, rest = line.replace("\t", " ", 1).partition(" ")
-        code = code.strip()
+        code = list_code(code)
         if not any(ch.isdigit() for ch in code):
             continue  # header / junk line
         rest = re.sub(r"\s+", " ", rest.replace("\t", " ")).strip()
@@ -55,26 +56,6 @@ def safe_filename(name: str) -> str:
     if name.split(".")[0].upper() in _RESERVED:
         name += "_"
     return name[:150].rstrip(". ")
-
-
-def _js_escape(s: str) -> str:
-    return re.sub(r"([.*+?^${}()|\[\]\\/])", r"\\\1", s)
-
-
-def code_pattern(code: str) -> str:
-    """Regex (valid in both Python and JavaScript) matching the code as a whole token.
-
-    '2-558' matches 'Realme 2-558', '2 - 558', '#2-558,' but not '12-558' or '2-5581'.
-    The two halves may also be joined by + & or : ('2+558', '2&558-', '2:558'), and the code may be
-    one of several written together: '2-557+558', '2-557 + 2-558'.
-    """
-    parts = [_js_escape(p) for p in re.split(r"\s*" + _DASHES + r"\s*", code.strip()) if p]
-    sep = r"\s*" + _JOINS + r"\s*"
-    body = sep.join(parts)
-    if len(parts) == 2 and parts[1].isdigit():
-        prefix, plus = parts[0] + sep, r"[ \t]*[+&][ \t]*"
-        body += "|" + prefix + r"\d+(?:" + plus + "(?:" + prefix + r")?\d+)*?" + plus + parts[1]
-    return r"(?<![0-9A-Za-z])(?:" + body + r")(?![0-9A-Za-z])"
 
 
 def list_date(text: str, now: datetime | None = None) -> datetime | None:

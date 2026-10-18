@@ -38,9 +38,6 @@ struct CodeItem: Hashable {
 enum Codes {
     static let imageExts = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".bmp"]
     private static let dateRx = Rx(#"(?:^|\s)(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\s*$"#)
-    // \uXXXX: these patterns also go to JavaScript (scanChat), which has no \x{...}
-    private static let dashes = #"[-‐-―]"#
-    private static let joins = #"[-‐-―+&:]"#
 
     static func parseCodeList(_ text: String) -> [CodeItem] {
         var items: [CodeItem] = []
@@ -48,7 +45,7 @@ enum Codes {
             let line = raw.trimmed
             if line.isEmpty { continue }
             let first = line.replacingFirst("\t", with: " ")
-            let code = first.before(" ").trimmed
+            let code = ProductCode.listCode(first.before(" "))
             var rest = first.contains(" ") ? first.after(" ") : ""
             if !code.hasDigit { continue }
             rest = squeezeSpaces(rest.replacingOccurrences(of: "\t", with: " ")).trimmed
@@ -62,21 +59,8 @@ enum Codes {
         return items
     }
 
-    private static let jsSpecial = Rx(#"([.*+?^${}()|\[\]\\/])"#)
-    private static func jsEscape(_ s: String) -> String { jsSpecial.replace(s) { "\\" + $0.value } }
-
-    /// Regex (valid in both ICU and JavaScript) matching the code as a whole token.
-    static func codePattern(_ code: String) -> String {
-        let parts = Rx(#"\s*"# + dashes + #"\s*"#).split(code.trimmed).filter { !$0.isEmpty }.map { jsEscape($0) }
-        let sep = #"\s*"# + joins + #"\s*"#
-        var body = parts.joined(separator: sep)
-        if parts.count == 2 && parts[1].isAllDigits {
-            let prefix = parts[0] + sep
-            let plus = #"[ \t]*[+&][ \t]*"#
-            body += "|" + prefix + #"\d+(?:"# + plus + "(?:" + prefix + #")?\d+)*?"# + plus + parts[1]
-        }
-        return "(?<![0-9A-Za-z])(?:" + body + ")(?![0-9A-Za-z])"
-    }
+    /// Regex (valid in both ICU and JavaScript) matching a message about the code (ProductCode.codePattern).
+    static func codePattern(_ code: String) -> String { ProductCode.codePattern(code) }
 
     private static let listDateRx = Rx(#"\s*(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\s*"#)
 

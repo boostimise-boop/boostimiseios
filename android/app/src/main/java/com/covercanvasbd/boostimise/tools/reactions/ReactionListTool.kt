@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.covercanvasbd.boostimise.core.Codes
 import com.covercanvasbd.boostimise.core.OrderParser
+import com.covercanvasbd.boostimise.core.ProductCode
 import com.covercanvasbd.boostimise.core.Storage
 import com.covercanvasbd.boostimise.core.bnToAscii
 import com.covercanvasbd.boostimise.core.jsonOf
@@ -36,8 +37,11 @@ val CHOICES = listOf(
 )
 
 object ReactionCodes {
-    private val ANY_CODE = re("(?<![\\w-])(\\d{1,3}[a-z]{0,2})\\s*-\\s*(\\d{1,6})(?!\\d|\\s*-\\s*\\d)", true)
-    private val CODE = re("\\s*(\\d{1,3}[a-z]{0,2})\\s*[-‐-―]\\s*(\\d{1,6})\\s*", true)
+    // A date such as 16-10-2026 or 2026-10-16 is not a code.
+    private val DATE = re("(?<![0-9A-Za-z])(?:(?:[12]?\\d|3[01])[-/.](?:0?[1-9]|1[0-2])[-/.](?:\\d{4}|\\d{2})" +
+        "|\\d{4}[-/.]\\d{1,2}[-/.]\\d{1,2})(?![0-9A-Za-z])")
+    // One code of a list: "2-558", "2:558+", "5A_380" ...
+    private val CODE = re("\\s*(" + ProductCode.PREFIX + ")\\s*" + ProductCode.SEP + "\\s*(\\d{1,6})[\\s+\\-]*", true)
     private const val MAX_CODES = 3
 
     fun normalize(code: String): String {
@@ -47,7 +51,7 @@ object ReactionCodes {
 
     /** The codes a reacted message is about, if it names no more than MAX_CODES. */
     fun messageCodes(text: String): List<String> {
-        val written = ANY_CODE.findAll(bnToAscii(text)).map { OrderParser.normalizeCode(it.groupValues[1], it.groupValues[2]) }
+        val written = ProductCode.codesInText(DATE.replace(bnToAscii(text), " "))
         val codes = (OrderParser.findCodes(text) + written).distinct()
         return if (codes.size <= MAX_CODES) codes else emptyList()
     }

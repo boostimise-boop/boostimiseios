@@ -16,20 +16,17 @@ import os
 import re
 import unicodedata
 
+from core import codes
+
 _BN_DIGITS = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
 
-# One code per line in the list file: "6-830", "5a-380"
-_LIST_LINE = re.compile(r"^\s*(\d{1,3}[a-z]{0,2})\s*-\s*(\d{1,6})\s*$", re.I)
-# The code at the start of one of the first lines of a message. Next to "-" it may be joined by
-# + & or : ("3+163", "3&163-", "3:163"), and "+" / "&" after it adds more codes of the same list
-# ("3-163+164", "3-163 & 3-164"): group 3, read with _CODE_MORE.
-_CODE_LINE = re.compile(
-    r"^\W*(?:(?:order|code|id|অর্ডার|কোড)\W*)?(\d{1,3}[a-z]{0,2})\s*[-+&:]\s*(\d{1,6})(?!\d)"
-    r"((?:[ \t]*[+&][ \t]*(?:\1\s*-\s*)?\d{1,6}(?![\da-z])(?![ \t]*-\s*\d))*)",
-    re.I,
-)
-_CODE_MORE = re.compile(r"(?<![\da-z])(\d+)(?![\da-z]|[ \t]*-\s*\d)", re.I)
-_CODE_ANY = re.compile(r"(?<!\w)\d{1,3}[a-z]{0,2}\s*-\s*\d{1,6}(?!\d)", re.I)
+# One code per line in the list file: "6-830", "5a-380" (also typed "6:830", "6_830+" ...)
+_LIST_LINE = re.compile(r"^\s*(" + codes.PREFIX + r")\s*" + codes.SEP + r"\s*(\d{1,6})[\s+\-]*$", re.I)
+# The code at the start of one of the first lines of a message, with the codes of the same list written
+# after it ("3-163+164", "2-151-152", "2:152+2-153"); see core/codes.py.
+_CODE_LINE = re.compile(r"^\W*(?:(?:order|code|id|অর্ডার|কোড)\W*)?" + codes.CHAT_CODE, re.I)
+# Any code written with a dash, with the codes after it ("2-151-152"), so its numbers are not read as the amount
+_CODE_ANY = re.compile(r"(?<!\w)" + codes.CHAT_CODE.replace(codes.SEP, codes.DASH, 1), re.I)
 
 # Bangladeshi mobile numbers: 01XXXXXXXXX, +8801XXXXXXXXX, 01734-484040, 1734484040
 _PHONE = re.compile(r"(?<!\d)(?:\+?88[ -]?)?(0?1[3-9](?:[ -]?\d){8})(?!\d)")
@@ -96,18 +93,13 @@ _ADDRESS_HINT = re.compile(_nfc(
 _EDGE_CHARS = " \t,;:|/\\-–—.।ঃ="
 
 
-def normalize_code(prefix, number):
-    return f"{prefix.lower()}-{int(number)}"
-
-
-def split_code(code):
-    prefix, number = code.rsplit("-", 1)
-    return prefix, int(number)
+normalize_code = codes.norm
+split_code = codes.split_code
 
 
 def read_code_list(path):
     """Codes from the list file, in file order, without duplicates or blank lines."""
-    codes, seen = [], set()
+    found, seen = [], set()
     with open(path, encoding="utf-8-sig", errors="replace") as f:
         for line in f:
             m = _LIST_LINE.match(line.translate(_BN_DIGITS))
@@ -115,8 +107,8 @@ def read_code_list(path):
                 code = normalize_code(*m.groups())
                 if code not in seen:
                     seen.add(code)
-                    codes.append(code)
-    return codes
+                    found.append(code)
+    return found
 
 
 def write_phone_to_list(path, code, phone):
@@ -144,7 +136,7 @@ def write_phone_to_list(path, code, phone):
 
 def _clean(line):
     line = line.translate(_BN_DIGITS).replace(" ", " ")
-    line = re.sub(r"[*_~`]", "", line)  # WhatsApp *bold* / _italic_ markers
+    line = re.sub(r"[*~`]|(?<!\d)_|_(?!\d)", "", line)  # WhatsApp *bold* / _italic_ markers, not "2_152"
     return re.sub(r"\s+", " ", line).strip()
 
 
@@ -154,8 +146,7 @@ def find_codes(text):
     for line in lines[:3]:
         m = _CODE_LINE.match(line)
         if m:
-            numbers = [m.group(2)] + _CODE_MORE.findall(m.group(3))
-            return list(dict.fromkeys(normalize_code(m.group(1), n) for n in numbers))
+            return codes.match_codes(m)
     return []
 
 
@@ -279,7 +270,7 @@ def parse_order(text):
     for i, line in enumerate(lines[:3]):
         m = _CODE_LINE.match(line)
         if m:
-            code, code_line = normalize_code(m.group(1), m.group(2)), i
+            code, code_line = normalize_code(m.group(1), m.group(3)), i
             break
     body = [l for i, l in enumerate(lines) if i != code_line]
 

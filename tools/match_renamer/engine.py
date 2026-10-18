@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from core import whatsapp
+from core import codes as product_codes, whatsapp
 
 APP_TITLE = "PhotoMatch Renamer"
 APP_VERSION = "1.1.0"
@@ -39,19 +39,14 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".jfif"}
 GIVE_UP_MARGIN = 20   # stop looking for 6-847 once only codes <= 6-827 are being loaded
 SCROLL_STEP = 0.75    # scroll up 75% of the chat's height per step, so every message is seen
 
-# A product code: "6-852", "4a-75", "5A - 380" ... in the product list
-CODE_PATTERN = r"(?<![0-9A-Za-z])(\d{1,3}[A-Za-z]?)\s*[-‐-―]\s*(\d{1,5})(?!\d)"
-CODE_RE = re.compile(CODE_PATTERN)
-# The code as it is typed in WhatsApp (JavaScript, flags "gm"). A code that starts a line may also
-# be joined by + & or : ("3+163", "3&163-", "3:163"), and "+" / "&" after a code adds more codes of
-# the same list ("3-163+164", "3-163 & 3-164"): group 3, read with WA_MORE_PATTERN.
-_DASH = r"[-‐-―]"
-WA_CODE_PATTERN = (
-    r"(?<![0-9A-Za-z])(\d{1,3}[A-Za-z]?)\s*(?:" + _DASH + r"|(?<=^[^0-9A-Za-z\n]*[0-9A-Za-z]+\s*)[+&:])"
-    r"\s*(\d{1,5})(?!\d)"
-    r"((?:[ \t]*[+&][ \t]*(?:\1\s*" + _DASH + r"\s*)?\d{1,5}(?![0-9A-Za-z])(?![ \t]*" + _DASH + r"\s*\d))*)"
-)
-WA_MORE_PATTERN = r"(?<![0-9A-Za-z])(\d+)(?![0-9A-Za-z]|[ \t]*" + _DASH + r"\s*\d)"
+# A product code: "6-852", "4a-75", "5A - 380", "6:852" ... in the product list
+CODE_PATTERN = product_codes.CODE
+CODE_RE = product_codes.CODE_RE
+# The code as it is typed in WhatsApp (JavaScript, flags "gm"): "3-163", "3:163+", "3-163+164",
+# "2-151-152", "2+152-2+153" ... (core/codes.py). Group 3 is the rest of the list, read item by item with
+# WA_MORE_PATTERN after "__P__" in it is replaced by the code's prefix.
+WA_CODE_PATTERN = product_codes.JS_CHAT_CODE
+WA_MORE_PATTERN = product_codes.JS_MORE_ITEM
 # File/folder names that already start with a code were renamed before -> never rename them again
 DONE_RE = re.compile(r"^(\d{1,2}[A-Za-z]?)\s*-\s*(\d{1,5})(?!\d)")
 # Sub folders for one list, e.g. "6-" or "5a-"
@@ -231,10 +226,10 @@ class LocalPhoto:
 # (#main, [data-id] message rows, .selectable-text, .quoted-mention, blob: images).
 JS_HELPERS = r"""
 () => {
-  if (window.__prbm && window.__prbm.v === 5) return true;
+  if (window.__prbm && window.__prbm.v === 6) return true;
   const CODE = new RegExp(__CODE__, 'gm');
-  const MORE = new RegExp(__MORE__, 'g');
-  const P = { v: 5 };
+  const MORE = __MORE__;
+  const P = { v: 6 };
   const inside = (el, boxes) => boxes.some((b) => b.contains(el));
   const scrollable = (e) => {
     const o = getComputedStyle(e).overflowY;
@@ -392,7 +387,8 @@ JS_HELPERS = r"""
     for (const m of text.matchAll(CODE)) {
       const group = m[1].toLowerCase() + '-';
       codes.push(group + parseInt(m[2], 10));
-      for (const x of m[3].matchAll(MORE)) codes.push(group + parseInt(x[1], 10));
+      const more = new RegExp(MORE.split('__P__').join(m[1]), 'gi');
+      for (const x of m[3].matchAll(more)) codes.push(group + parseInt(x[1], 10));
     }
     const imgs = P.images(n, boxes);
     const r = n.getBoundingClientRect();

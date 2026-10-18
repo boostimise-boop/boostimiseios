@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from core import codes as product_codes
 from tools.pathao_autofill.order_parser import find_codes, normalize_code
 
 # (settings key, button text, emojis looked for, tooltip). 😢 is WhatsApp's built-in "sad"
@@ -17,23 +18,25 @@ CHOICES = [
 ]
 
 _BN_DIGITS = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
-# A code anywhere in a caption ("Realme C85 2-558"), but not a date such as 16-10-2026.
-_ANY_CODE = re.compile(r"(?<![\w-])(\d{1,3}[a-z]{0,2})\s*-\s*(\d{1,6})(?!\d|\s*-\s*\d)", re.I)
-_CODE = re.compile(r"\s*(\d{1,3}[a-z]{0,2})\s*[-‐-―]\s*(\d{1,6})\s*", re.I)
+# A date such as 16-10-2026 or 2026-10-16 is not a code.
+_DATE = re.compile(r"(?<![0-9A-Za-z])(?:(?:[12]?\d|3[01])[-/.](?:0?[1-9]|1[0-2])[-/.](?:\d{4}|\d{2})"
+                   r"|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})(?![0-9A-Za-z])")
+# One code of a list: "2-558", "2:558+", "5A_380" ...
+_CODE = re.compile(r"\s*(" + product_codes.PREFIX + r")\s*" + product_codes.SEP + r"\s*(\d{1,6})[\s+\-]*", re.I)
 # A message naming more codes is a list or summary: its reactions are not about one code.
 MAX_CODES = 3
 
 
 def normalize(code: str) -> str:
-    """'2-558', '2 - 558', '5A-380' -> '2-558', '5a-380', as order_parser writes codes."""
+    """'2-558', '2 - 558', '2:558+', '5A-380' -> '2-558', '5a-380', as order_parser writes codes."""
     m = _CODE.fullmatch(code or "")
     return normalize_code(*m.groups()) if m else (code or "").strip().lower()
 
 
 def message_codes(text: str) -> list[str]:
     """The codes a reacted message is about: the code(s) an order message starts with ("6-872",
-    "3-163+164") and the codes written anywhere in it, if that is no more than MAX_CODES."""
-    written = (normalize_code(p, n) for p, n in _ANY_CODE.findall((text or "").translate(_BN_DIGITS)))
+    "3-163+164", "2-151-152") and the codes written anywhere in it, if that is no more than MAX_CODES."""
+    written = product_codes.codes_in_text(_DATE.sub(" ", (text or "").translate(_BN_DIGITS)))
     codes = list(dict.fromkeys([*find_codes(text), *written]))
     return codes if len(codes) <= MAX_CODES else []
 

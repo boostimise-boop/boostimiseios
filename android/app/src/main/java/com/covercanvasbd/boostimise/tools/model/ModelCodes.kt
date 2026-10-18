@@ -1,54 +1,24 @@
 package com.covercanvasbd.boostimise.tools.model
 
+import com.covercanvasbd.boostimise.core.ProductCode
 import com.covercanvasbd.boostimise.core.Storage
 import com.covercanvasbd.boostimise.core.re
 
 /** Product codes in chat text and the codes list / result file (tools/model_detect/codes.py). */
 object ProductCodes {
-    // 5a-403, 5A-403, 5a - 403, 5a–403, 5a_403 ...
-    val CODE_RE = re("(?<![0-9A-Za-z])(\\d{1,3}[A-Za-z]?)\\s*[-‐-―_]\\s*(\\d{1,5})(?![0-9A-Za-z])")
+    // 5a-403, 5A-403, 5a - 403, 5a_403, 5a:403 ... and the codes typed in a chat: core/ProductCode.kt
+    val CODE_RE = ProductCode.CODE_RE
     val NOT_DONE = setOf("", "not found", "no image", "unknown")
-    private const val DASH = "[-‐-―_]"
-    private val MSG_CODE_RE = re(
-        "(?<![0-9A-Za-z])(?<prefix>\\d{1,3}[A-Za-z]?)\\s*(?<sep>$DASH|[+&:])\\s*(?<num>\\d{1,5})(?![0-9A-Za-z])" +
-            "(?<more>(?:[ \\t]*[+&][ \\t]*(?:\\k<prefix>\\s*$DASH\\s*)?\\d{1,5}(?![0-9A-Za-z])" +
-            "(?![ \\t]*$DASH\\s*\\d))*)", true)
-    private val MORE_RE = re("(?<![0-9A-Za-z])(\\d+)(?![0-9A-Za-z]|[ \\t]*$DASH\\s*\\d)")
 
-    fun norm(prefix: String, number: String) = "${prefix.lowercase()}-${number.toInt()}"
-    fun split(code: String): Pair<String, Int> = code.substringBeforeLast('-') to code.substringAfterLast('-').toInt()
+    fun norm(prefix: String, number: String) = ProductCode.norm(prefix, number)
+    fun split(code: String): Pair<String, Int> = ProductCode.split(code)
 
-    class M(val start: Int, val end: Int, val prefix: String, val num: String, val more: String)
+    class M(val start: Int, val end: Int)
 
     /** The codes written in a chat message ("redmi 12 8+128" and "at 10:30" are not codes). */
-    fun codeMatches(text: String?): List<M> {
-        val t = text ?: ""
-        val out = mutableListOf<M>()
-        var pos = 0
-        while (pos <= t.length) {
-            val m = MSG_CODE_RE.find(t, pos) ?: break
-            val g = m.groups as MatchNamedGroupCollection
-            val start = m.range.first
-            val line = t.substring(t.lastIndexOf('\n', start - 1).let { if (it < 0) 0 else it + 1 }, start)
-            val sep = g["sep"]!!.value
-            if (sep in setOf("+", "&", ":") && Regex("[0-9A-Za-z]").containsMatchIn(line)) {
-                pos = g["prefix"]!!.range.last + 1
-                continue
-            }
-            out += M(start, m.range.last + 1, g["prefix"]!!.value, g["num"]!!.value, g["more"]?.value.orEmpty())
-            pos = m.range.last + 1
-        }
-        return out
-    }
+    fun codeMatches(text: String?): List<M> = ProductCode.codeMatches(text).map { M(it.range.first, it.range.last + 1) }
 
-    fun codesInText(text: String?): List<String> {
-        val out = mutableListOf<String>()
-        for (m in codeMatches(text)) {
-            out += norm(m.prefix, m.num)
-            out += MORE_RE.findAll(m.more).map { norm(m.prefix, it.groupValues[1]) }
-        }
-        return out.distinct()
-    }
+    fun codesInText(text: String?): List<String> = ProductCode.codesInText(text)
 
     /** The text with the codes in it replaced by spaces. */
     fun stripCodes(text: String?): String {

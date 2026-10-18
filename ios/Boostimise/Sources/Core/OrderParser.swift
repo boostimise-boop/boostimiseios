@@ -7,12 +7,13 @@ enum OrderParser {
     private static let bnLetters = #"\x{0980}-\x{0982}\x{0984}-\x{09ff}"#
     private static let sepChars = #"[:\x{0983}=\-\x{2013}\x{2014}.\x{0964}]"#
 
-    private static let listLine = Rx(#"^\s*(\d{1,3}[a-z]{0,2})\s*-\s*(\d{1,6})\s*$"#, ignoreCase: true)
-    private static let codeLine = Rx(
-        #"^\W*(?:(?:order|code|id|অর্ডার|কোড)\W*)?(\d{1,3}[a-z]{0,2})\s*[-+&:]\s*(\d{1,6})(?!\d)"# +
-            #"((?:[ \t]*[+&][ \t]*(?:\1\s*-\s*)?\d{1,6}(?![\da-z])(?![ \t]*-\s*\d))*)"#, ignoreCase: true)
-    private static let codeMore = Rx(#"(?<![\da-z])(\d+)(?![\da-z]|[ \t]*-\s*\d)"#, ignoreCase: true)
-    private static let codeAny = Rx(#"(?<!\w)\d{1,3}[a-z]{0,2}\s*-\s*\d{1,6}(?!\d)"#, ignoreCase: true)
+    private static let listLine = Rx(#"^\s*("# + ProductCode.prefix + #")\s*"# + ProductCode.sep + #"\s*(\d{1,6})[\s+\-]*$"#,
+                                     ignoreCase: true)
+    // The code at the start of a line with the codes of its list after it ("3-163+164", "2-151-152", "2:152+2-153")
+    private static let codeLine = Rx(#"^\W*(?:(?:order|code|id|অর্ডার|কোড)\W*)?"# + ProductCode.chatCode, ignoreCase: true)
+    // Any code written with a dash, with the codes after it, so its numbers are not read as the amount
+    private static let codeAny = Rx(#"(?<!\w)"# + ProductCode.chatCode.replacingFirst(ProductCode.sep, with: ProductCode.dash),
+                                    ignoreCase: true)
     static let phone = Rx(#"(?<!\d)(?:\+?88[ -]?)?(0?1[3-9](?:[ -]?\d){8})(?!\d)"#)
     private static let nameLabel = Rx(
         #"^(?:customer|receiver|recipient|কাস্টমার|গ্রাহক|প্রাপক)?(?:'s|’s|er|ের)?\s*"# +
@@ -53,7 +54,7 @@ enum OrderParser {
             #"|\b(?:district|dist|zila|zilla|thana|upazila|upozila|village|vill|post|road|house|holding|sadar|bazar|"# +
             #"sector|block|lane|area)\b"#))
     private static let edgeChars = " \t,;:|/\\-–—.।ঃ="
-    private static let markup = Rx(#"[*_~`]"#)
+    private static let markup = Rx(#"[*~`]|(?<!\d)_|_(?!\d)"#)   // *bold* / _italic_ markers, not "2_152"
     private static let digit = Rx(#"\d"#)
     private static let leadNonWord = Rx(#"^[^\w]+"#)
     private static let tkGlued = Rx(#"(?i)(tk|taka|bdt|৳)(?=\d)"#)
@@ -61,13 +62,9 @@ enum OrderParser {
     private static let commas = Rx(#"\s*,[\s,]*"#)
     private static let letter = Rx(#"[^\W\d_]"#)
 
-    static func normalizeCode(_ prefix: String, _ number: String) -> String {
-        "\(prefix.lowercased())-\(Int(number) ?? 0)"
-    }
+    static func normalizeCode(_ prefix: String, _ number: String) -> String { ProductCode.norm(prefix, number) }
 
-    static func splitCode(_ code: String) -> (String, Int) {
-        (code.beforeLast("-"), Int(code.afterLast("-")) ?? 0)
-    }
+    static func splitCode(_ code: String) -> (String, Int) { ProductCode.split(code) }
 
     /// Codes of a list file, in file order, without duplicates or blank lines.
     static func readCodeList(_ text: String) -> [String] {
@@ -107,17 +104,11 @@ enum OrderParser {
         (text ?? "").lines().map { clean($0) }.filter { !$0.isEmpty }
     }
 
-    /// The order codes a message starts with: ["6-872"], ["3-163", "3-164"] for "3-163+164", or [].
+    /// The order codes a message starts with: ["6-872"], ["3-163", "3-164"] for "3-163+164" or "3-163-164", or [].
     static func findCodes(_ text: String?) -> [String] {
         for line in lines(text).prefix(3) {
             guard let m = codeLine.find(line), m.start == 0 else { continue }
-            let numbers = [m.group(2)] + codeMore.findAll(m.group(3)).map { $0.group(1) }
-            var out: [String] = []
-            for n in numbers {
-                let c = normalizeCode(m.group(1), n)
-                if !out.contains(c) { out.append(c) }
-            }
-            return out
+            return ProductCode.matchCodes(m)
         }
         return []
     }
@@ -247,7 +238,7 @@ enum OrderParser {
         var codeLineIndex = -1
         for (i, line) in lines.prefix(3).enumerated() {
             guard let m = codeLine.find(line), m.start == 0 else { continue }
-            code = normalizeCode(m.group(1), m.group(2))
+            code = normalizeCode(m.group(1), m.group(3))
             codeLineIndex = i
             break
         }

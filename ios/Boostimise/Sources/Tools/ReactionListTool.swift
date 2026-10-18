@@ -16,8 +16,12 @@ let CHOICES = [
 ]
 
 enum ReactionCodes {
-    private static let anyCode = Rx(#"(?<![\w-])(\d{1,3}[a-z]{0,2})\s*-\s*(\d{1,6})(?!\d|\s*-\s*\d)"#, ignoreCase: true)
-    private static let code = Rx(#"\s*(\d{1,3}[a-z]{0,2})\s*[-‐-―]\s*(\d{1,6})\s*"#, ignoreCase: true)
+    // A date such as 16-10-2026 or 2026-10-16 is not a code.
+    private static let date = Rx(#"(?<![0-9A-Za-z])(?:(?:[12]?\d|3[01])[-/.](?:0?[1-9]|1[0-2])[-/.](?:\d{4}|\d{2})"# +
+        #"|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})(?![0-9A-Za-z])"#)
+    // One code of a list: "2-558", "2:558+", "5A_380" ...
+    private static let code = Rx(#"\s*("# + ProductCode.prefix + #")\s*"# + ProductCode.sep + #"\s*(\d{1,6})[\s+\-]*"#,
+                                 ignoreCase: true)
     private static let numAndRest = Rx(#"(\d+)(.*)"#)
     private static let maxCodes = 3
 
@@ -28,7 +32,7 @@ enum ReactionCodes {
 
     /// The codes a reacted message is about, if it names no more than maxCodes.
     static func messageCodes(_ text: String) -> [String] {
-        let written = anyCode.findAll(bnToAscii(text)).map { OrderParser.normalizeCode($0.group(1), $0.group(2)) }
+        let written = ProductCode.codesInText(date.replace(bnToAscii(text), " "))
         var codes: [String] = []
         for c in OrderParser.findCodes(text) + written where !codes.contains(c) { codes.append(c) }
         return codes.count <= maxCodes ? codes : []

@@ -1,61 +1,12 @@
 """Product-code handling: parse the codes .txt file, find codes inside chat text,
 and read/write the result file ("5a-403 samsung a70")."""
 import os
-import re
 
-# Matches 5a-403, 5A-403, 5a - 403, 5a–403, 5a_403 ...
-CODE_RE = re.compile(
-    r"(?<![0-9A-Za-z])(\d{1,3}[A-Za-z]?)\s*[-‐-―_]\s*(\d{1,5})(?![0-9A-Za-z])"
-)
+# 5a-403, 5A-403, 5a - 403, 5a_403, 5a:403 ... and the codes typed in a chat ("2-151-152"): core/codes.py
+from core.codes import CODE_RE, code_matches, codes_in_text, norm, split_code  # noqa: F401
 
 # Results that mean "not identified yet" (these codes are searched again on the next run)
 NOT_DONE = {"", "not found", "no image", "unknown"}
-
-
-def norm(prefix, number):
-    return f"{prefix.lower()}-{int(number)}"
-
-
-def split_code(code):
-    prefix, num = code.rsplit("-", 1)
-    return prefix, int(num)
-
-
-# The same code as it is typed in a chat. A code that starts a line may also be joined by + & or :
-# ("3+163", "3&163-", "3:163"), and "+" / "&" after a code adds more codes of the same list:
-# "3-163+164", "3-163 & 3-164".
-_DASH = r"[-‐-―_]"
-_MSG_CODE_RE = re.compile(
-    r"(?<![0-9A-Za-z])(?P<prefix>\d{1,3}[A-Za-z]?)\s*(?P<sep>" + _DASH + r"|[+&:])\s*(?P<num>\d{1,5})(?![0-9A-Za-z])"
-    r"(?P<more>(?:[ \t]*[+&][ \t]*(?:(?P=prefix)\s*" + _DASH + r"\s*)?\d{1,5}(?![0-9A-Za-z])"
-    r"(?![ \t]*" + _DASH + r"\s*\d))*)",
-    re.I,
-)
-_MORE_RE = re.compile(r"(?<![0-9A-Za-z])(\d+)(?![0-9A-Za-z]|[ \t]*" + _DASH + r"\s*\d)")
-
-
-def code_matches(text):
-    """The codes written in a chat message, as matches of _MSG_CODE_RE."""
-    text = text or ""
-    pos = 0
-    while True:
-        m = _MSG_CODE_RE.search(text, pos)
-        if not m:
-            return
-        line = text[text.rfind("\n", 0, m.start()) + 1:m.start()]
-        if m["sep"] in "+&:" and re.search(r"[0-9A-Za-z]", line):
-            pos = m.end("prefix")  # "redmi 12 8+128", "at 10:30": not a code
-            continue
-        yield m
-        pos = m.end()
-
-
-def codes_in_text(text):
-    out = []
-    for m in code_matches(text):
-        out.append(norm(m["prefix"], m["num"]))
-        out += [norm(m["prefix"], n) for n in _MORE_RE.findall(m["more"])]
-    return list(dict.fromkeys(out))
 
 
 def strip_codes(text):

@@ -83,7 +83,7 @@ final class Nav {
         }
     }
 
-    private(set) var screen: Screen = .enhancer
+    private(set) var screen: Screen = .dashboard
 
     func go(_ s: Screen) { screen = s }
 }

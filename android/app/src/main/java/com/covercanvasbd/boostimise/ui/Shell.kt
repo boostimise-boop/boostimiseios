@@ -84,7 +84,7 @@ object Nav {
         PLANS("Plans", Icons.Filled.WorkspacePremium, null),
     }
 
-    var screen by mutableStateOf(Screen.ENHANCER)
+    var screen by mutableStateOf(Screen.DASHBOARD)
         private set
 
     fun go(s: Screen) {
@@ -119,7 +119,7 @@ private fun Shell(activity: Activity) {
     var waTop by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current
     BackHandler(drawer.isOpen) { scope.launch { drawer.close() } }
-    BackHandler(!drawer.isOpen && screen != Nav.Screen.ENHANCER) { Nav.go(Nav.Screen.ENHANCER) }
+    BackHandler(!drawer.isOpen && screen != Nav.Screen.DASHBOARD) { Nav.go(Nav.Screen.DASHBOARD) }
     LaunchedEffect(Unit) { WaEngine.open() }
 
     // The menu opens only with the ☰ button: a swipe that is a bit sideways while scrolling must not open it.

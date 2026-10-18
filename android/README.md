@@ -30,9 +30,23 @@ Keep Boostimise open while a tool reads chats; a notification shows while one is
 
 *Continue with Google* opens Chrome; Google comes back to the app on
 `http://127.0.0.1:53214/auth/callback`, the address the Windows app already uses, so **no new
-Supabase setting is needed**. The phone app sends `X-Client-Info: boostimise-android/<version>`:
-the database's desktop version lock does not apply to it (it is treated like the website), and
-enhancements are recorded with device type `mobile`.
+Supabase setting is needed**. The phone app sends `X-Client-Info: boostimise-android/<version>`
+and records enhancements with device type `mobile`.
+
+## Updates and access (admin panel)
+
+Like the Windows app, the phone checks in with the server on start, when it comes back to the
+front and every 30 minutes (`core/AppGuard.kt`, `mobile_check_in` in `supabase/schema.sql`). Each
+check records the phone on the admin panel's **Phone installs** page (model, Android version, RAM,
+screen, app version, signed-in user, location; the id is a hash of the Android ID). On
+**Releases & access › Android** the admin adds each APK version, can make a version required
+("Update required" screen with a *Download update* button), block one version, block one phone or
+switch the app off. A newer release that isn't required shows a banner with *Update*. Offline the
+last answer counts for 72 hours (set there too).
+
+**Shipping a new APK:** raise `versionCode` and `versionName` in `app/build.gradle.kts`, build,
+upload `Boostimise.apk` (e.g. `https://boostimise.com/downloads/Boostimise-<version>.apk`), then add
+the release with that link on **Releases & access › Android**.
 
 ## Build
 

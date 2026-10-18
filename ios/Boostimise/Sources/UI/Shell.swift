@@ -24,6 +24,7 @@ struct ShellView: View {
                 .padding(.horizontal, 8)
                 .frame(height: 52)
                 .background(Brand.navy.ignoresSafeArea(edges: .top))
+                UpdateBanner()
                 if wa { WhatsAppHeader().background(Brand.bg) }
                 ZStack {
                     // WhatsApp Web stays on screen all the time (behind the tools), so iOS keeps it running.

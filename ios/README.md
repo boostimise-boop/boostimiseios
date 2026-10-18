@@ -40,8 +40,16 @@ It is one more of WhatsApp's linked devices; the PC and Android links keep worki
 *Continue with Google* opens a sign-in sheet in the app. Google comes back to
 `http://127.0.0.1:53214/auth/callback` (a tiny server inside the app, the same address the Windows
 and Android apps use), so **no new Supabase setting is needed**. The app sends
-`X-Client-Info: boostimise-ios/<version>` (treated like the website, not version-locked) and
-records enhancements with device type `mobile`.
+`X-Client-Info: boostimise-ios/<version>` and records enhancements with device type `mobile`.
+
+## Updates and access (admin panel)
+
+As on Android (`Core/AppGuard.swift`): the iPhone checks in on start, when it comes back to the
+front and every 30 minutes, shows up on the admin panel's **Phone installs** page, and obeys
+**Releases & access › iPhone** (required version, blocked version, blocked iPhone, app switched
+off; a newer release shows a banner). The id is a hash of a random id kept in the Keychain, so it
+stays the same after reinstalling. For a new build raise `MARKETING_VERSION` and
+`CURRENT_PROJECT_VERSION` in `project.yml`, then add the release on the iPhone tab.
 
 ## Build it without a Mac (GitHub Actions)
 

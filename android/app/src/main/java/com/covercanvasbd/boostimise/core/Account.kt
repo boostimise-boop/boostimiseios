@@ -253,6 +253,7 @@ object Account {
     }
 
     private fun afterSignIn(startRealtime: Boolean = true) {
+        AppGuard.soon()  // records the signed-in user on this phone
         scheduleRefresh()
         if (startRealtime) startRealtime()
     }
@@ -381,9 +382,13 @@ object Account {
             session?.put("status", st.raw)
             saveSession()
         }
+        // a version that may not run comes as 'mobile' (and as blocked, for older copies): the
+        // update screen shows it, not "Account suspended"
+        val lock = status?.raw?.optJSONObject("mobile")
+        if (lock != null) AppGuard.lockFromStatus(lock)
         val p = profile
         state = when {
-            p != null && p.blocked -> State.BLOCKED
+            p != null && p.blocked && lock == null -> State.BLOCKED
             p != null && !p.onboarded -> State.ONBOARDING
             else -> State.READY
         }
@@ -408,6 +413,7 @@ object Account {
         )
         val ch = RealtimeChannel("account:$uid", changes, onChange = {
             liveTick++
+            AppGuard.soon()  // releases / access changed in the admin panel ping app_settings
             reloadJob?.cancel()
             reloadJob = scope.launch {
                 delay(400)

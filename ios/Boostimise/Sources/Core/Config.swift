@@ -20,8 +20,8 @@ enum Config {
     static let termsURL = siteURL + "/terms"
     static let privacyURL = siteURL + "/privacy"
 
-    // Sent with every Supabase request. Not "boostimise-desktop/...": the database's version lock
-    // is for the Windows app only, so the phone apps are treated like the website.
+    // Sent with every Supabase request. The database reads the version from it and locks out a
+    // version the admin panel blocked or set below the minimum (mobile_verdict in schema.sql).
     static let clientInfo = "boostimise-ios/\(appVersion)"
     static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS like Mac OS X) Boostimise-iOS/\(appVersion)"
 }

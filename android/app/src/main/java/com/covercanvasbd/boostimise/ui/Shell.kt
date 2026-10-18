@@ -67,6 +67,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
 import com.covercanvasbd.boostimise.R
 import com.covercanvasbd.boostimise.core.Account
+import com.covercanvasbd.boostimise.core.AppGuard
 import com.covercanvasbd.boostimise.wa.Jobs
 import com.covercanvasbd.boostimise.wa.WaEngine
 import kotlinx.coroutines.launch
@@ -95,7 +96,9 @@ object Nav {
 fun BoostimiseApp(activity: Activity) {
     BoostimiseTheme {
         Surface(Modifier.fillMaxSize().systemBarsPadding(), color = Brand.BG) {
-            when (Account.state) {
+            // a version / phone that may not run shows the update screen, signed in or not
+            if (AppGuard.state == AppGuard.State.LOCKED) UpdateScreen(activity)
+            else when (Account.state) {
                 Account.State.LOADING -> LoadingScreen()
                 Account.State.SIGNED_OUT -> SignInScreen(activity)
                 Account.State.ONBOARDING -> OnboardingScreen()
@@ -174,6 +177,7 @@ private fun Shell(activity: Activity) {
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = Brand.NAVY, titleContentColor = Color.White,
                             navigationIconContentColor = Color.White),
                     )
+                    UpdateBanner(activity)
                     if (wa) WhatsAppHeader()
                 }
                 if (!wa) Box(Modifier.fillMaxSize().imePadding()) {

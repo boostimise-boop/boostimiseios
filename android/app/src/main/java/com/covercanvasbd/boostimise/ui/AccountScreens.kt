@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -44,9 +45,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.covercanvasbd.boostimise.R
 import com.covercanvasbd.boostimise.core.Account
+import com.covercanvasbd.boostimise.core.AppGuard
 import com.covercanvasbd.boostimise.core.Config
 import com.covercanvasbd.boostimise.core.Supabase
 import com.covercanvasbd.boostimise.core.jsonOf
+import com.covercanvasbd.boostimise.core.optStr
 import com.google.i18n.phonenumbers.NumberParseException
 import com.google.i18n.phonenumbers.PhoneNumberUtil
 import kotlinx.coroutines.launch
@@ -189,4 +192,56 @@ fun PhoneForm(country0: String?, phone0: String?, askName: Boolean = false, subm
                 }
             })
     }
+}
+
+/** This copy may not run right now (core/AppGuard.kt): why, the new version and how to get it. */
+@Composable
+fun UpdateScreen(activity: Activity) {
+    val v = AppGuard.verdict
+    val reason = AppGuard.reason
+    val title = when (reason) {
+        "version_blocked" -> "Please update Boostimise"
+        "disabled" -> "Boostimise is switched off"
+        "device_blocked" -> "This phone is blocked"
+        "offline" -> "You're offline"
+        else -> "Update required"
+    }
+    val updating = reason in setOf("update_required", "version_blocked")
+    Centered {
+        Section(title, v.optStr("message")) {
+            if (updating) {
+                val latest = AppGuard.latestVersion
+                Hint("You have version ${Config.APP_VERSION}" + (if (latest != null && latest != Config.APP_VERSION) " · latest is $latest" else "") + ".")
+                v.optStr("notes")?.takeIf { it.isNotBlank() }?.let {
+                    Text("WHAT'S NEW", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Brand.TEXT_2)
+                    Text(it, fontSize = 13.sp)
+                }
+                AppGuard.downloadUrl?.let { url ->
+                    Button({ openLink(activity, url) }, Modifier.fillMaxWidth()) { Text("Download update") }
+                }
+            }
+            OutlinedButton({ AppGuard.check() }, Modifier.fillMaxWidth(), enabled = !AppGuard.checking) {
+                Text(if (AppGuard.checking) "Checking…" else "Check again")
+            }
+        }
+        Hint("Boostimise ${Config.APP_VERSION}")
+    }
+}
+
+/** A newer version is out but not required yet. */
+@Composable
+fun UpdateBanner(activity: Activity) {
+    val latest = AppGuard.latestVersion ?: return
+    if (!AppGuard.updateAvailable || AppGuard.dismissedUpdate == latest) return
+    Row(Modifier.fillMaxWidth().background(Brand.ACCENT_SOFT).padding(start = 16.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Text("Boostimise $latest is available (you have ${Config.APP_VERSION}).", fontSize = 13.sp, color = Brand.ACCENT_DARK,
+            modifier = Modifier.weight(1f))
+        AppGuard.downloadUrl?.let { url -> TextButton({ openLink(activity, url) }) { Text("Update") } }
+        TextButton({ AppGuard.dismissedUpdate = latest }) { Text("Later", color = Brand.TEXT_2) }
+    }
+}
+
+private fun openLink(activity: Activity, url: String) {
+    runCatching { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
 }

@@ -4,6 +4,7 @@ import SwiftUI
 struct BoostimiseApp: App {
     init() {
         Account.shared.start()
+        AppGuard.shared.start()
     }
 
     var body: some Scene {
@@ -19,12 +20,17 @@ struct RootView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             Brand.bg.ignoresSafeArea()
-            switch Account.shared.state {
-            case .loading: LoadingScreen()
-            case .signedOut: SignInScreen()
-            case .onboarding: OnboardingScreen()
-            case .blocked: BlockedScreen()
-            case .ready: ShellView()
+            // a version / iPhone that may not run shows the update screen, signed in or not
+            if AppGuard.shared.state == .locked {
+                UpdateScreen()
+            } else {
+                switch Account.shared.state {
+                case .loading: LoadingScreen()
+                case .signedOut: SignInScreen()
+                case .onboarding: OnboardingScreen()
+                case .blocked: BlockedScreen()
+                case .ready: ShellView()
+                }
             }
             if !Toaster.shared.text.isEmpty {
                 Text(Toaster.shared.text)
@@ -49,8 +55,12 @@ struct RootView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
-            case .background: Jobs.shared.enteredBackground()
-            case .active: Jobs.shared.enteredForeground()
+            case .background:
+                Jobs.shared.enteredBackground()
+                AppGuard.shared.onBackground()
+            case .active:
+                Jobs.shared.enteredForeground()
+                AppGuard.shared.onForeground()  // checks again when the last check is older than a minute
             default: break
             }
         }

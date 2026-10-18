@@ -299,6 +299,7 @@ final class Account {
     }
 
     private func afterSignIn(startRealtime: Bool = true) {
+        AppGuard.shared.soon()  // records the signed-in user on this iPhone
         scheduleRefresh()
         if startRealtime { self.startRealtime() }
     }
@@ -446,7 +447,11 @@ final class Account {
             session?["status"] = st.raw
             saveSession()
         }
-        if let p = profile, p.blocked {
+        // a version that may not run comes as 'mobile' (and as blocked, for older copies): the
+        // update screen shows it, not "Account suspended"
+        let lock = status?.raw.obj("mobile")
+        if let lock { AppGuard.shared.lockFromStatus(lock) }
+        if let p = profile, p.blocked, lock == nil {
             state = .blocked
         } else if let p = profile, !p.onboarded {
             state = .onboarding
@@ -474,6 +479,7 @@ final class Account {
         let ch = RealtimeChannel(name: "account:\(uid)", changes: changes, onChange: { [weak self] _ in
             guard let self else { return }
             self.liveTick += 1
+            AppGuard.shared.soon()  // releases / access changed in the admin panel ping app_settings
             self.reloadJob?.cancel()
             self.reloadJob = Task {
                 try? await Task.sleep(nanoseconds: 400_000_000)

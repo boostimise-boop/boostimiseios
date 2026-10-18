@@ -9,6 +9,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.IntentCompat
+import com.covercanvasbd.boostimise.core.AppGuard
 import com.covercanvasbd.boostimise.ui.BoostimiseApp
 import com.covercanvasbd.boostimise.ui.Nav
 
@@ -20,6 +21,16 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 33) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         handle(intent)
         setContent { BoostimiseApp(this) }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        AppGuard.onForeground()  // checks again when the last check is older than a minute
+    }
+
+    override fun onPause() {
+        super.onPause()
+        AppGuard.onBackground()
     }
 
     override fun onNewIntent(intent: Intent) {

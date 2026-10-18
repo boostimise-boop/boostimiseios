@@ -196,3 +196,62 @@ private struct CountrySheet: View {
         }
     }
 }
+
+/// This copy may not run right now (Core/AppGuard.swift): why, the new version and how to get it.
+struct UpdateScreen: View {
+    var body: some View {
+        let guardian = AppGuard.shared
+        let v = guardian.verdict
+        let reason = guardian.reason
+        let updating = reason == "update_required" || reason == "version_blocked"
+        Centered {
+            Card(title: Self.title(reason), hint: v.strOrNil("message")) {
+                if updating {
+                    let latest = guardian.latestVersion
+                    Hint("You have version \(Config.appVersion)" + (latest != nil && latest != Config.appVersion ? " · latest is \(latest!)" : "") + ".")
+                    if let notes = v.strOrNil("notes"), !notes.isEmpty {
+                        Text("WHAT'S NEW").font(.system(size: 11, weight: .bold)).foregroundStyle(Brand.text2)
+                        Text(notes).font(.system(size: 13)).foregroundStyle(Brand.navy).fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let url = guardian.downloadURL {
+                        PrimaryButton("Download update", full: true) { UIApplication.shared.open(url) }
+                    }
+                }
+                SecondaryButton(guardian.checking ? "Checking…" : "Check again", full: true, enabled: !guardian.checking) {
+                    guardian.check()
+                }
+            }
+            Hint("Boostimise \(Config.appVersion)")
+        }
+    }
+
+    private static func title(_ reason: String) -> String {
+        switch reason {
+        case "version_blocked": return "Please update Boostimise"
+        case "disabled": return "Boostimise is switched off"
+        case "device_blocked": return "This iPhone is blocked"
+        case "offline": return "You're offline"
+        default: return "Update required"
+        }
+    }
+}
+
+/// A newer version is out but not required yet.
+struct UpdateBanner: View {
+    var body: some View {
+        let guardian = AppGuard.shared
+        if guardian.updateAvailable, let latest = guardian.latestVersion, guardian.dismissedUpdate != latest {
+            HStack(spacing: 4) {
+                Text("Boostimise \(latest) is available (you have \(Config.appVersion)).")
+                    .font(.system(size: 13)).foregroundStyle(Brand.accentDark)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let url = guardian.downloadURL {
+                    LinkButton("Update") { UIApplication.shared.open(url) }
+                }
+                LinkButton("Later", color: Brand.text2) { guardian.dismissedUpdate = latest }
+            }
+            .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 8)
+            .background(Brand.accentSoft)
+        }
+    }
+}

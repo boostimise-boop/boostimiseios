@@ -24,8 +24,8 @@ object Config {
     const val TERMS_URL = "$SITE_URL/terms"
     const val PRIVACY_URL = "$SITE_URL/privacy"
 
-    // Sent with every Supabase request. Not "boostimise-desktop/...": the database's version lock
-    // (desktop_verdict) is for the Windows app only, so the phone app is treated like the website.
+    // Sent with every Supabase request. The database reads the version from it and locks out a
+    // version the admin panel blocked or set below the minimum (mobile_verdict in schema.sql).
     val CLIENT_INFO = "boostimise-android/$APP_VERSION"
     val USER_AGENT = "Mozilla/5.0 (Linux; Android) Boostimise-Android/$APP_VERSION"
 }

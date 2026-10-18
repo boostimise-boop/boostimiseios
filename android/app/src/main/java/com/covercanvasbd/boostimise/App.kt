@@ -2,6 +2,7 @@ package com.covercanvasbd.boostimise
 
 import android.app.Application
 import com.covercanvasbd.boostimise.core.Account
+import com.covercanvasbd.boostimise.core.AppGuard
 import com.covercanvasbd.boostimise.core.Storage
 import com.covercanvasbd.boostimise.tools.enhancer.EnhancerTool
 import com.covercanvasbd.boostimise.tools.fetch.FetchTool
@@ -30,6 +31,7 @@ class App : Application() {
         Storage.init(this)
         Jobs.init(this)
         Account.init(this, Tools.scope)
+        AppGuard.init(this, Tools.scope)
         WaEngine.init(this, Tools.scope)
         Tools.enhancer = EnhancerTool(Tools.scope)
         Tools.fetchByCode = FetchTool("fetch_by_code", "Fetch by Code", scope = Tools.scope)
@@ -37,5 +39,6 @@ class App : Application() {
         Tools.modelDetect = ModelDetectTool(Tools.scope)
         Tools.pathao = PathaoTool(Tools.scope)
         Account.start()
+        AppGuard.start()
     }
 }

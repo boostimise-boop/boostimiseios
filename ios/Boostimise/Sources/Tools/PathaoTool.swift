@@ -22,6 +22,11 @@ final class PathaoTool {
     static let SAVED_EARLIER = "Saved earlier"
     static let SKIPPED = "Skipped"
     static let NOT_FOUND = "Not found"
+    static let IN_PATHAO = "Saved (in Pathao)"   // "Check Pathao" found an order with this code as its Merchant Order ID
+
+    static let checkDays = 45   // how far back "Check Pathao" reads the orders
+    private static let restartDrop = 40   // a prefix starting its codes again (6-980 -> 6-47..6-1) drops at least this much...
+    private static let restartRatio = 3   // ...to at most a third of the numbers before
 
     static let defaultChats: [(String, String)] = [
         ("2", "Free Cover BD(2-)"),
@@ -66,6 +71,41 @@ const __find = (spec) => {
   }
   return null;
 };
+"""#
+
+    // The orders created from `from` to `to` (YYYY-MM-DD), read from the API behind the merchant panel's
+    // Orders page with the panel's own login (the result waits in window.__ccbdOrders). Archived orders
+    // are left out, like on that page, and so are return orders (RC...): they carry the merchant as
+    // recipient, and the delivery they return may be older.
+    private static let jsPathaoOrders = #"""
+(function (from, to) {
+  window.__ccbdOrders = {pending: true};
+  (async () => {
+    let token = '';
+    try { token = JSON.parse(localStorage.getItem('pathaoMerchant:auth') || '{}').token || ''; } catch (e) {}
+    if (!token) return {error: 'login'};
+    const orders = [];
+    for (let page = 1; page <= 100; page++) {
+      const qs = new URLSearchParams({page: page, limit: 500, archive: 0, from_date: from, to_date: to});
+      let r;
+      for (let tries = 1; ; tries++) {   // "Too Many Requests": wait a little longer each time
+        r = await fetch('/api/v1/orders/all?' + qs, {headers: {Authorization: 'Bearer ' + token, Accept: 'application/json'}});
+        if (r.status !== 429 || tries === 6) break;
+        await new Promise(done => setTimeout(done, 3000 * tries));
+      }
+      if (r.status === 401 || r.status === 403) return {error: 'login'};
+      if (!r.ok) return {error: 'Pathao answered ' + r.status};
+      const d = (await r.json()).data || {};
+      for (const o of d.data || []) {
+        if (o.order_type === 'Return' || !o.merchant_order_id) continue;
+        orders.push([o.merchant_order_id, o.recipient_phone || '', o.recipient_name || '',
+                     o.order_amount == null ? '' : String(o.order_amount), o.order_created_at || '', o.order_consignment_id || '']);
+      }
+      if (!d.last_page || page >= d.last_page) break;
+    }
+    return {orders: orders};
+  })().then(r => { window.__ccbdOrders = r; }, e => { window.__ccbdOrders = {error: String(e)}; });
+})("__FROM__", "__TO__");
 """#
 
     // Remembers when Save was clicked, and every POST/PUT answer.
@@ -472,6 +512,186 @@ if (!window.__ccbdHooked) {
         } else {
             log.add("\(item.code): wrote \(phone) next to it in the list (copy the list to keep it).")
         }
+    }
+
+    // MARK: - Check Pathao
+
+    /// One Pathao order: Merchant Order ID, phone, name, amount, created time, consignment id.
+    private struct PathaoOrder {
+        let id: String
+        let phone: String
+        let name: String
+        let amount: String
+        let created: String
+        let consignment: String
+    }
+
+    private(set) var checking = false
+
+    private static func median(_ v: [Int]) -> Double {
+        let s = v.sorted()
+        return s.count % 2 == 1 ? Double(s[s.count / 2]) : Double(s[s.count / 2 - 1] + s[s.count / 2]) / 2.0
+    }
+
+    /// {prefix: created time} of when each prefix last started its codes again from 1. The same code
+    /// comes back in every round (5-36 on 5 Oct and again after 5-1 on 13 Oct), so only the orders of
+    /// the current round say whether a code of the list is in Pathao. A restart is where the 10 orders
+    /// before were high and the 10 from there on are low (a list is often saved from the bottom, so a
+    /// round can start 6-47, 6-46...); one late order of an old round in between, or a few late ones of
+    /// this round, don't count as one.
+    private static func roundStarts(_ orders: [PathaoOrder]) -> [String: String] {
+        var byPrefix: [String: [(String, Int)]] = [:]
+        for o in orders {
+            for code in OrderParser.findCodes(o.id) {
+                let (prefix, number) = OrderParser.splitCode(code)
+                byPrefix[prefix, default: []].append((o.created, number))
+            }
+        }
+        var starts: [String: String] = [:]
+        for (prefix, list) in byPrefix {
+            let rows = list.sorted { $0.0 != $1.0 ? $0.0 < $1.0 : $0.1 < $1.1 }
+            let nums = rows.map { $0.1 }
+            var last = -1
+            if nums.count < 2 { continue }
+            for i in 1..<nums.count {
+                let before = median(Array(nums[max(0, i - 10)..<i]))
+                let after = median(Array(nums[i..<min(nums.count, i + 10)]))
+                if before - after >= Double(restartDrop) && after * Double(restartRatio) <= before
+                    && Double(nums[i]) - after < Double(restartDrop) {
+                    if last < 0 || i - last > 10 { starts[prefix] = rows[i].0 }   // the first order of a new round
+                    last = i
+                }
+            }
+        }
+        return starts
+    }
+
+    /// Reads the orders the merchant panel lists (the Pathao page below must be open and logged in).
+    private func readPathaoOrders() async throws -> [PathaoOrder] {
+        guard let host = await eval("location.hostname") as? String, host.hasSuffix("pathao.com") else {
+            throw NeedUser("Open merchant.pathao.com in the page below and log in, then tap Check Pathao again.")
+        }
+        let today = Date()
+        let from = Calendar.current.date(byAdding: .day, value: -Self.checkDays, to: today) ?? today
+        let script = Self.jsPathaoOrders
+            .replacingOccurrences(of: "__FROM__", with: dateText(from, "yyyy-MM-dd"))
+            .replacingOccurrences(of: "__TO__", with: dateText(today, "yyyy-MM-dd"))
+        _ = await eval(script)
+        let end = Date().addingTimeInterval(4 * 60)
+        while Date() < end {
+            try Task.checkCancellation()
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+            let text = await eval("JSON.stringify(window.__ccbdOrders || null)") as? String
+            guard let res = JSONTools.parse(text) as? JSON else {
+                throw NeedUser("The Pathao page changed while its orders were read. Tap Check Pathao again.")
+            }
+            if res.bool("pending") { continue }
+            let error = res.str("error")
+            if error == "login" {
+                throw NeedUser("Pathao is not logged in. Log in to merchant.pathao.com in the page below, then tap Check Pathao again.")
+            }
+            if !error.isEmpty { throw NeedUser("Could not read the orders from Pathao: \(error).") }
+            return (res.arr("orders") ?? []).compactMap { row -> PathaoOrder? in
+                guard let r = row as? [Any], r.count >= 6 else { return nil }
+                let s = r.map { ($0 as? String) ?? "" }
+                return PathaoOrder(id: s[0], phone: s[1], name: s[2], amount: s[3], created: s[4], consignment: s[5])
+            }
+        }
+        throw NeedUser("Pathao took too long to answer. Tap Check Pathao again.")
+    }
+
+    /// Looks the loaded codes up in Pathao's orders (the code is an order's Merchant Order ID), counting only
+    /// the orders of each prefix's current round of codes (see roundStarts). A code found there is marked as
+    /// saved with that order's phone, and the phone is written next to it in the list; the codes not found
+    /// stay as they are.
+    func checkPathao() {
+        if items.isEmpty {
+            state = "Open or paste your code list first."
+            return
+        }
+        if checking { return }
+        checking = true
+        attention = ""
+        Task {
+            do {
+                try await doCheckPathao()
+            } catch is CancellationError {
+                // stopped
+            } catch let e as NeedUser {
+                attention = e.message
+            } catch {
+                attention = "Error: \(error.localizedDescription)"
+                log.add("Error: \(error.localizedDescription)")
+            }
+            checking = false
+        }
+    }
+
+    private func doCheckPathao() async throws {
+        state = "Reading the orders from Pathao…"
+        let orders = try await readPathaoOrders()
+        let starts = Self.roundStarts(orders)
+        var byCode: [String: [PathaoOrder]] = [:]
+        for o in orders {
+            for code in OrderParser.findCodes(o.id) {   // "2-257+258": one order for both codes
+                if o.created >= (starts[OrderParser.splitCode(code).0] ?? "") { byCode[code, default: []].append(o) }
+            }
+        }
+        var shown = Set<String>()
+        for item in items {
+            let prefix = OrderParser.splitCode(item.code).0
+            if shown.insert(prefix).inserted, let s = starts[prefix] {
+                log.add("\(prefix)-: codes started again from 1 on \(String(s.prefix(16))) - older orders are not counted.")
+            }
+        }
+
+        var text = listText
+        var found: [String] = []
+        var missing: [String] = []
+        var written = 0
+        for item in items {
+            let hits = (byCode[item.code] ?? []).sorted { $0.created > $1.created }
+            guard let o = hits.first else {
+                missing.append(item.code)
+                continue
+            }
+            if item === cur && item.status == Self.FILLED {
+                log.add("\(item.code): ⚠ Pathao already has an order \(o.consignment) with this code - it is on the form now, check it is not saved twice.")
+                continue
+            }
+            var phones: [String] = []
+            for p in hits.flatMap({ OrderParser.findPhones($0.phone) }) where !phones.contains(p) { phones.append(p) }
+            let old = item.order
+            item.order = OrderParser.Order(code: item.code, name: o.name, phone: phones.first ?? o.phone, phone2: old?.phone2 ?? "",
+                                           address: old?.address ?? "", amount: o.amount, warnings: [])
+            item.status = Self.IN_PATHAO
+            found.append(item.code)
+            if hits.count > 1 {
+                let orderList = hits.map { $0.consignment + " " + $0.phone }.joined(separator: ", ")
+                log.add("\(item.code): ⚠ \(hits.count) Pathao orders of the current round have this code (\(orderList)). The newest is shown.")
+            }
+            if writePhone, let phone = phones.first, let changed = OrderParser.writePhoneToList(text, code: item.code, phone: phone) {
+                text = changed
+                written += 1
+            }
+        }
+
+        if written > 0 {
+            listText = text
+            if let url = listURL {
+                do {
+                    try Storage.writeText(url, text)
+                } catch {
+                    log.add("⚠ could not write the phones in \(listName) (\(error.localizedDescription)) - type them there yourself.")
+                    written = 0
+                }
+            }
+        }
+        var summary = "Read \(orders.count) Pathao orders of the last \(Self.checkDays) days; \(found.count) of the \(items.count) codes are among them"
+        if written > 0 { summary += ", phone written next to \(written) in \(listName)" }
+        log.add(summary + ".")
+        if !missing.isEmpty { log.add("Not in Pathao (\(missing.count)): \(missing.joined(separator: ", "))") }
+        state = "\(found.count) of \(items.count) codes are already in Pathao; \(missing.count) are not."
     }
 
     // MARK: - WhatsApp

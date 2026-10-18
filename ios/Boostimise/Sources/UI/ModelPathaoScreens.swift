@@ -101,10 +101,12 @@ struct PathaoScreen: View {
                     }
                     if !t.listName.isEmpty {
                         Hint("\(t.listName): \(t.items.count) codes, " +
-                             "\(t.items.filter { $0.status == PathaoTool.SAVED || $0.status == PathaoTool.SAVED_EARLIER }.count) saved")
+                             "\(t.items.filter { $0.status == PathaoTool.SAVED || $0.status == PathaoTool.SAVED_EARLIER || $0.status == PathaoTool.IN_PATHAO }.count) saved")
                     }
                     Text(t.state).font(.system(size: 13)).foregroundStyle(Brand.navy)
                     if !t.attention.isEmpty { Hint(t.attention, Brand.error) }
+                    // which codes of the list already have a Pathao order (by Merchant Order ID); the phone is written in the list
+                    SecondaryButton(t.checking ? "Checking Pathao…" : "Check Pathao", enabled: !t.checking && !t.items.isEmpty) { t.checkPathao() }
                     HStack(spacing: 8) {
                         if t.running { SecondaryButton("Pause") { t.pause() } } else { PrimaryButton("Start") { t.start() } }
                         SecondaryButton("Saved → Next", enabled: t.cur != nil) { t.markSaved() }

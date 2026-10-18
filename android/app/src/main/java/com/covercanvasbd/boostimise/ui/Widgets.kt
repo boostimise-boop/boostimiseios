@@ -46,6 +46,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,6 +54,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -143,11 +147,31 @@ fun CodeListBox(text: String, onChange: (String) -> Unit, placeholder: String = 
             runCatching { onChange(Storage.readText(uri)) }.onFailure { toast(ctx, "Could not read the file") }
         }
     }
-    OutlinedTextField(text, onChange, label = { Text("Code list (one per line)") }, placeholder = { Text(placeholder) },
-        modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 260.dp), textStyle = MaterialTheme.typography.bodyMedium)
+    // A long list is shown folded: a scrolling text box inside the scrolling page catches the swipes
+    // that start on it, so the page would not move. Tap it to edit.
+    var editing by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
+    val focus = remember { FocusRequester() }
+    val lines = remember(text) { text.lines().filter { it.isNotBlank() } }
+    if (lines.size > 6 && !editing) {
+        Column(Modifier.fillMaxWidth().border(1.dp, Brand.BORDER, RoundedCornerShape(4.dp)).clickable { editing = true }
+            .padding(14.dp)) {
+            Text(lines.take(3).joinToString("\n"), style = MaterialTheme.typography.bodyMedium, maxLines = 3)
+            Hint("… ${lines.size} lines · tap to edit", Brand.ACCENT)
+        }
+    } else {
+        OutlinedTextField(text, onChange, label = { Text("Code list (one per line)") }, placeholder = { Text(placeholder) },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 260.dp).focusRequester(focus).onFocusChanged {
+                if (it.isFocused) editing = true            // typing a short list past 6 lines must not fold it
+                else if (focused) editing = false
+                focused = it.isFocused
+            }, textStyle = MaterialTheme.typography.bodyMedium)
+        LaunchedEffect(editing) { if (editing) focus.requestFocus() }
+    }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton({ open.launch(arrayOf("text/*")) }) { Text("Open .txt") }
-        OutlinedButton({ paste(ctx)?.let(onChange) }) { Text("Paste") }
+        OutlinedButton({ open.launch(arrayOf("text/*")); editing = false }) { Text("Open .txt") }
+        OutlinedButton({ paste(ctx)?.let(onChange); editing = false }) { Text("Paste") }
+        if (editing && lines.size > 6) TextButton({ editing = false }) { Text("Done") }
         if (text.isNotEmpty()) TextButton({ onChange("") }) { Text("Clear") }
     }
 }

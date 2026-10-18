@@ -1,4 +1,5 @@
-"""Reaction List: the codes whose WhatsApp messages were reacted with ❌, 📵 or 😥.
+"""Reaction List: the codes whose WhatsApp messages were reacted with ❌, 📵, 😥 or the emojis typed
+for "Custom".
 
 Reads the chats in the shared WhatsApp window (core/whatsapp.py) back to the "Look back" date and
 lists every code whose message, or a photo sent right after it, has the chosen reaction, with the
@@ -7,15 +8,16 @@ looked for. The list can be copied ("1. 2-558 Realme C85 ❌ 01734484040") or sa
 """
 from __future__ import annotations
 
+import os
 import time
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt, QTimer, Signal
+from PySide6.QtCore import QSettings, QStandardPaths, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QComboBox, QCompleter, QFileDialog, QFormLayout, QGroupBox,
-    QHBoxLayout, QHeaderView, QLabel, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar,
     QPushButton, QSpinBox, QSplitter, QStyle, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -23,13 +25,13 @@ from core import theme
 from core.paths import data_dir
 from core.ui import FlowLayout, scrollable
 from tools.whatsapp_fetch.helpers import CodeItem, parse_code_list
-from tools.whatsapp_fetch.page import ALL_CHATS, ALL_GROUPS, STACK_BELOW, STATE_COLORS, default_browse_dir
+from tools.whatsapp_fetch.page import ALL_CHATS, ALL_GROUPS, STACK_BELOW, STATE_COLORS, default_browse_dir, user_dir
 
-from .helpers import CHOICES, Found, code_sort_key, format_list, normalize
+from .helpers import CHOICES, CUSTOM, DEFAULT_CHOICE, Found, code_sort_key, custom_reactions, format_list, normalize
 from .worker import ReactionListWorker
 
-COLS = ["#", "Code", "Name", "Reaction", "Phone", "Chat", "Date"]
-COL_NUM, COL_NAME, COL_REACT, COL_CHAT = 0, 2, 3, 5
+COLS = ["#", "Code", "Name", "Reaction", "Phone", "Chat", "Date", "Photos"]
+COL_NUM, COL_NAME, COL_REACT, COL_CHAT, COL_PHOTOS = 0, 2, 3, 5, 7
 
 STYLE = f"""
 QLabel#hint {{ color: {theme.TEXT_2}; font-size: 9pt; }}
@@ -53,7 +55,7 @@ class ReactionListPage(QMainWindow):
         self.items: list[CodeItem] = []
         self.list_codes: dict[str, tuple[int, CodeItem]] = {}  # the pasted codes of the run, by normalize()
         self.results: dict[str, Found] = {}
-        self.wanted: tuple[str, ...] = CHOICES[-1][2]  # reactions of the run, in the order they are shown
+        self.wanted: tuple[str, ...] = ()  # reactions of the run, in the order they are shown
         self.wa_state = "idle"
         self.job_running = False
         self.pending_job: tuple[list, dict] | None = None
@@ -101,6 +103,13 @@ class ReactionListPage(QMainWindow):
             btn.setCursor(Qt.PointingHandCursor)
             self.choice_group.addButton(btn, i)
             choice_row.addWidget(btn)
+        self.custom_btn = self.choice_group.button(self._custom_index())
+        self.custom_btn.toggled.connect(lambda on: on and self.custom_edit.setFocus())
+        self.custom_edit = QLineEdit()
+        self.custom_edit.setPlaceholderText("Custom: type your reactions, e.g. 👍 ❤️ 🔥")
+        self.custom_edit.setToolTip("Any emojis, with or without spaces. Skin tones count as the same reaction "
+                                    "(👍🏻 = 👍); 😥 also counts 😢.")
+        self.custom_edit.textEdited.connect(lambda _: self.custom_btn.setChecked(True))
 
         self.chat_combo = QComboBox()
         self.chat_combo.setEditable(True)
@@ -123,16 +132,34 @@ class ReactionListPage(QMainWindow):
         self.lookback_spin.setToolTip(
             "How far back to read each chat. With codes pasted it is extended automatically\n"
             "to a week before the oldest date in your list (e.g. 26/9 → from 19/9).")
+        self.fetch_combo = QComboBox()
+        self.fetch_combo.addItem("List only", False)
+        self.fetch_combo.addItem("List + photos", True)
+        self.fetch_combo.setToolTip("List + photos also saves each listed code's reacted photos, named like\n"
+                                    "Fetch by Code names them (2-558 Realme C85.jpg). A code whose message has the\n"
+                                    "reaction gets all its photos; otherwise only the photos with the reaction.")
+        self.photos_edit = QLineEdit()
+        photos_btn = QPushButton("Browse…")
+        photos_btn.clicked.connect(self._pick_photos_dir)
+        self.photos_row = QWidget()
+        pr = QHBoxLayout(self.photos_row)
+        pr.setContentsMargins(0, 0, 0, 0)
+        pr.addWidget(self.photos_edit, 1)
+        pr.addWidget(photos_btn)
+        self.fetch_combo.currentIndexChanged.connect(lambda _: self.photos_row.setEnabled(self._with_photos()))
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
         form.addRow("Search in", chat_row)
         form.addRow("Look back", self.lookback_spin)
+        form.addRow("Fetch", self.fetch_combo)
+        form.addRow("Save photos to", self.photos_row)
         hint = QLabel("Counts a reaction on the message with the code, on its album, or on a photo "
                       "the same person sent right after it.")
         hint.setObjectName("hint")
         hint.setWordWrap(True)
         set_lay = QVBoxLayout(set_box)
         set_lay.addLayout(choice_row)
+        set_lay.addWidget(self.custom_edit)
         set_lay.addLayout(form)
         set_lay.addWidget(hint)
 
@@ -155,7 +182,7 @@ class ReactionListPage(QMainWindow):
         for b in (self.connect_btn, self.start_btn, self.stop_btn):
             btn_row.addWidget(b)
         self.progress = QProgressBar()
-        self.progress.setFormat("%v / %m chats")
+        self.progress.setFormat("%v / %m")
         self.progress.setRange(0, 1)
         self.progress.setValue(0)
         wa_hint = QLabel("WhatsApp opens in one Edge window that every tool shares. First time: scan the QR "
@@ -190,6 +217,8 @@ class ReactionListPage(QMainWindow):
         hdr.setSectionResizeMode(COL_NAME, QHeaderView.Interactive)
         hdr.setSectionResizeMode(COL_CHAT, QHeaderView.Stretch)
         self.table.setColumnWidth(COL_NAME, 180)
+        self.table.setToolTip("Double-click a code to open its saved photos")
+        self.table.itemDoubleClicked.connect(self._open_photos)
         self.react_font = QFont(self.font())
         self.react_font.setPointSize(13)
         self.found_label = QLabel(objectName="count")
@@ -245,19 +274,44 @@ class ReactionListPage(QMainWindow):
         s = self.settings
         self.chat_combo.setCurrentText(s.value("chat", ALL_CHATS))
         self.lookback_spin.setValue(int(s.value("lookback_days", 10)))
+        self.custom_edit.setText(s.value("custom_reactions", ""))
         keys = [c[0] for c in CHOICES]
-        choice = s.value("reaction", "all")
-        self.choice_group.button(keys.index(choice) if choice in keys else len(CHOICES) - 1).setChecked(True)
+        choice = s.value("reaction", DEFAULT_CHOICE)
+        self.choice_group.button(keys.index(choice if choice in keys else DEFAULT_CHOICE)).setChecked(True)
+        self.fetch_combo.setCurrentIndex(1 if s.value("with_photos", False, type=bool) else 0)
+        self.photos_edit.setText(s.value("photos_dir", str(user_dir(QStandardPaths.PicturesLocation, "Pictures")
+                                                           / "Reaction List")))
+        self.photos_row.setEnabled(self._with_photos())
 
     def _save_settings(self):
         s = self.settings
         s.setValue("chat", self.chat_combo.currentText())
         s.setValue("lookback_days", self.lookback_spin.value())
         s.setValue("reaction", self._choice()[0])
+        s.setValue("custom_reactions", self.custom_edit.text().strip())
+        s.setValue("with_photos", self._with_photos())
+        s.setValue("photos_dir", self.photos_edit.text().strip())
         s.sync()
 
+    def _with_photos(self) -> bool:
+        return bool(self.fetch_combo.currentData())
+
+    def _pick_photos_dir(self):
+        path = QFileDialog.getExistingDirectory(self, "Save photos to", self.photos_edit.text() or str(default_browse_dir()))
+        if path:
+            self.photos_edit.setText(path)
+
+    @staticmethod
+    def _custom_index() -> int:
+        return [c[0] for c in CHOICES].index(CUSTOM)
+
     def _choice(self) -> tuple:
-        return CHOICES[max(self.choice_group.checkedId(), 0)]
+        """(key, label, emojis, tip); for Custom the emojis typed in its box."""
+        choice = CHOICES[max(self.choice_group.checkedId(), 0)]
+        if choice[0] != CUSTOM:
+            return choice
+        emojis = custom_reactions(self.custom_edit.text())
+        return (CUSTOM, " ".join(emojis), emojis, choice[3])
 
     # ---- code list / results ---------------------------------------------------
     def _open_txt(self):
@@ -291,7 +345,8 @@ class ReactionListPage(QMainWindow):
         self.table.setRowCount(len(rows))
         for r, f in enumerate(rows):
             when = datetime.fromtimestamp(f.t).strftime("%d/%m %H:%M") if f.t else ""
-            values = [str(r + 1), f.code, f.name, f.react(self.wanted), ", ".join(f.phones), ", ".join(f.chats), when]
+            values = [str(r + 1), f.code, f.name, f.react(self.wanted), ", ".join(f.phones), ", ".join(f.chats), when,
+                      f.photos]
             for c, text in enumerate(values):
                 cell = QTableWidgetItem(text)
                 if c == COL_REACT:
@@ -301,9 +356,24 @@ class ReactionListPage(QMainWindow):
                     cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 elif c == COL_CHAT:
                     cell.setToolTip(text)
+                elif c == COL_PHOTOS:
+                    cell.setToolTip(f.photos_path)
                 self.table.setItem(r, c, cell)
+        self.table.setColumnHidden(COL_PHOTOS, not any(f.photos for f in rows))
         self.found_label.setText(f"{len(rows)} code(s)")
         self._update_buttons()
+
+    def _on_photos(self, code: str, text: str, path: str):
+        f = self.results.get(code)
+        if f:
+            f.photos, f.photos_path = text, path or f.photos_path
+            self._refresh_table()
+
+    def _open_photos(self, item: QTableWidgetItem):
+        rows = self._rows()
+        path = rows[item.row()].photos_path if item.row() < len(rows) else ""
+        if path and Path(path).exists():
+            os.startfile(path)  # noqa: S606 - open in Explorer / image viewer
 
     def _on_found(self, entries: list):
         for e in entries:
@@ -351,6 +421,15 @@ class ReactionListPage(QMainWindow):
             return
         self._parse_list()
         _, label, emojis, _ = self._choice()
+        if not emojis:
+            QMessageBox.information(self, "No reaction", "Type the reaction emojis to look for in the Custom box, "
+                                                         "e.g. 👍 ❤️ 🔥")
+            self.custom_edit.setFocus()
+            return
+        photos_dir = self.photos_edit.text().strip() if self._with_photos() else ""
+        if self._with_photos() and not photos_dir:
+            QMessageBox.information(self, "Photos folder", "Choose a folder to save the photos in.")
+            return
         self.wanted = emojis
         self.list_codes = {}
         for i, item in enumerate(self.items):
@@ -362,6 +441,7 @@ class ReactionListPage(QMainWindow):
             "reactions": "".join(emojis),
             "lookback_days": self.lookback_spin.value(),
             "chat": self._chat_filter(),
+            "photos_dir": photos_dir,
         }
         rows = list(enumerate(self.items))
         self._save_settings()
@@ -398,6 +478,7 @@ class ReactionListPage(QMainWindow):
         self.worker.state_changed.connect(self._on_state)
         self.worker.chats_loaded.connect(self._on_chats)
         self.worker.found.connect(self._on_found)
+        self.worker.photos.connect(self._on_photos)
         self.worker.progress.connect(self._on_progress)
         self.worker.activity.connect(lambda text: self.statusBar().showMessage(text))
         self.worker.job_finished.connect(self._job_ended)
@@ -470,6 +551,9 @@ class ReactionListPage(QMainWindow):
         self.list_edit.setReadOnly(self.job_running)
         for btn in self.choice_group.buttons():
             btn.setEnabled(not self.job_running)
+        self.custom_edit.setReadOnly(self.job_running)
+        self.fetch_combo.setEnabled(not self.job_running)
+        self.photos_row.setEnabled(self._with_photos() and not self.job_running)
         has_rows = bool(self.results)
         self.copy_btn.setEnabled(has_rows)
         self.save_btn.setEnabled(has_rows)

@@ -11,6 +11,9 @@ You check the form, finish whatever else Pathao needs and click Save. As soon as
 save goes through, the next code is filled. Codes are taken from the bottom of the file
 upwards (can be switched off). After each save the phone is written next to its code in the
 list file ("3-620<TAB>  01814120910"), which marks the code as done there.
+
+"Check Pathao" looks the loaded codes up in Pathao's orders (by Merchant Order ID), only in each
+prefix's current round of codes (5-1, 5-2... again after 5-117): the codes found there are marked as saved with their order's phone, which is also written in the list.
 """
 import copy
 import os
@@ -30,13 +33,13 @@ from core import shell, theme
 from core.ui import FlowLayout
 
 from .autofill_engine import (
-    APP_DIR, FETCHING, FILLED, LOG_FILE, NOT_FOUND, PENDING, SAVED, SAVED_EARLIER, SAVED_LOG, SKIPPED,
+    APP_DIR, FETCHING, FILLED, IN_PATHAO, LOG_FILE, NOT_FOUND, PENDING, SAVED, SAVED_EARLIER, SAVED_LOG, SKIPPED,
     Worker, load_settings, read_saved_codes, save_settings,
 )
 from .order_parser import read_code_list, split_code
 
 ROW_COLORS = {FETCHING: "#fff6d6", FILLED: "#fff6d6", SAVED: "#dcfce7", SAVED_EARLIER: "#effaf1",
-              NOT_FOUND: "#fee2e2"}
+              IN_PATHAO: "#effaf1", NOT_FOUND: "#fee2e2"}
 BANNER_COLORS = {"info": (theme.ACCENT_SOFT, theme.ACCENT_DARK), "busy": ("#fff6d6", "#5c4700"), "wait": ("#e9eef5", "#2c3e5a"),
                  "ok": ("#dcfce7", "#14532d"), "warn": ("#fee2e2", "#7a1010")}
 COLUMNS = ["Code", "Status", "Name", "Phone", "Phone 2", "Amount"]
@@ -153,6 +156,13 @@ class MainWindow(QMainWindow):
                 b.setToolTip(key)
                 QShortcut(QKeySequence(key), self, activated=lambda c=cmd: self.send(c))
             bar.addWidget(b)
+        check = QPushButton("🔍  Check Pathao")
+        check.setToolTip("Finds which codes of the list already have a Pathao order (the code is its Merchant\n"
+                         "Order ID; only orders since the prefix's codes last started again from 1),\n"
+                         "marks them as saved with that order's phone and, when 'Write phone\n"
+                         "in the list' is on, writes the phone next to each of them in the list file.")
+        check.clicked.connect(self.check_pathao)
+        bar.addWidget(check)
         QShortcut(QKeySequence("F5"), self, activated=self.start)
         bar.addStretch()
         self.progress = QProgressBar()
@@ -366,6 +376,14 @@ class MainWindow(QMainWindow):
                 return
         self.push_settings()
         self.send("start")
+
+    def check_pathao(self):
+        if not self.codes:
+            self.load_list()
+            if not self.codes:
+                return
+        self.push_settings()
+        self.send("check_pathao")
 
     def refill(self):
         if not self.panel_code:

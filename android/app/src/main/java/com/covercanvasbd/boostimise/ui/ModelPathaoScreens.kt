@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -34,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -126,19 +128,39 @@ fun PathaoScreen(activity: Activity) {
         if (uri != null) scope.launch { runCatching { t.openList(uri) }.onFailure { toast(ctx, "Could not open the list") } }
     }
     Column(Modifier.fillMaxSize()) {
+        // folded: one slim bar, the Pathao page gets the rest of the screen
+        if (t.compact) Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+            Text(t.cur?.let { "${it.code} · ${it.status}" } ?: t.state, fontSize = 13.sp, maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
+            if (t.attention.isNotEmpty()) Hint(t.attention, Brand.ERROR)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (t.running) TextButton({ t.pause() }) { Text("Pause") } else TextButton({ t.start() }) { Text("Start") }
+                TextButton({ t.markSaved() }, enabled = t.cur != null) { Text("Saved → Next") }
+                TextButton({ t.skip() }) { Text("Skip") }
+                Spacer(Modifier.weight(1f))
+                TextButton({ t.fold(false) }) { Text("More ▾") }
+            }
+        }
         // the controls: at most half of the screen, the Pathao page below
-        Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()).padding(12.dp),
+        else Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()).padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            WaBanner()
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) { WaBanner() }
+                TextButton({ t.fold(true) }) { Text("Less ▴") }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedButton({ open.launch(arrayOf("text/*")) }) { Text("Open list") }
                 OutlinedButton({ paste(ctx)?.let { t.pasteList(it) } }) { Text("Paste list") }
                 TextButton({ settings = true }) { Text("Settings") }
             }
             if (t.listName.isNotEmpty()) Hint("${t.listName}: ${t.items.size} codes, " +
-                "${t.items.count { it.status == PathaoTool.SAVED || it.status == PathaoTool.SAVED_EARLIER }} saved")
+                "${t.items.count { it.status == PathaoTool.SAVED || it.status == PathaoTool.SAVED_EARLIER || it.status == PathaoTool.IN_PATHAO }} saved")
             Text(t.state, fontSize = 13.sp)
             if (t.attention.isNotEmpty()) Hint(t.attention, Brand.ERROR)
+            // which codes of the list already have a Pathao order (by Merchant Order ID); the phone is written in the list
+            OutlinedButton({ t.checkPathao() }, enabled = !t.checking && t.items.isNotEmpty()) {
+                Text(if (t.checking) "Checking Pathao…" else "Check Pathao")
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (t.running) OutlinedButton({ t.pause() }) { Text("Pause") } else Button({ t.start() }) { Text("Start") }
                 OutlinedButton({ t.markSaved() }, enabled = t.cur != null) { Text("Saved → Next") }

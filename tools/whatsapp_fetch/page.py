@@ -1,8 +1,6 @@
-"""Search WhatsApp Web for product codes and save their images.
+"""Fetch by Code: search WhatsApp Web for product codes and save their images.
 
-Two tools use this page: "Fetch by Code" (every photo of a code) and "Fetch by Reaction"
-(can keep only the photos reacted with chosen emojis). Each has its own settings in
-data/fetch_by_code and data/fetch_by_reaction; WhatsApp is the window all tools share (core/whatsapp.py).
+Settings are kept in data/fetch_by_code; WhatsApp is the window all tools share (core/whatsapp.py).
 """
 from __future__ import annotations
 
@@ -38,9 +36,6 @@ NEIGHBOUR_MODES = [
     ("Captioned with the code, + uncaptioned ones before and after", "both"),
 ]
 
-# 😢 is WhatsApp's built-in "sad" reaction, so it is listed next to 😥.
-DEFAULT_REACTIONS = "❌ 📵 😥 😢"
-
 STATE_COLORS = {
     "idle": "#9aa0a6", "closed": "#9aa0a6", "starting": "#1a73e8", "loading": "#1a73e8",
     "qr": "#e37400", "ready": "#1e8e3e", "error": "#d93025",
@@ -74,10 +69,9 @@ def default_browse_dir() -> Path:
 class MainWindow(QMainWindow):
     busy_changed = Signal(bool)
 
-    def __init__(self, title: str, data_name: str, reactions: bool):
+    def __init__(self, title: str, data_name: str):
         super().__init__()
         self.title = title
-        self.reactions = reactions  # show the reaction filter (and use the bridge that supports it)
         self.data_dir = data_dir(data_name)
         self.setStyleSheet(STYLE)
         self.settings = QSettings(str(self.data_dir / "settings.ini"), QSettings.IniFormat)
@@ -160,18 +154,6 @@ class MainWindow(QMainWindow):
         self.lookback_spin.setToolTip(
             "How far back to read each chat. It is extended automatically to a week\n"
             "before the oldest date in your list (e.g. 26/9 → from 19/9).")
-        self.react_check = QCheckBox("Only photos reacted with")
-        self.react_check.setToolTip(
-            "Save only photos that have one of these reactions - on the photo itself, on its album,\n"
-            "or on the message with the code. Use a separate 'Save to' folder for these runs, or\n"
-            "'Skip codes that are already saved' will skip codes you fetched before.")
-        self.react_edit = QLineEdit()
-        self.react_edit.setPlaceholderText(DEFAULT_REACTIONS)
-        self.react_edit.setToolTip("Reaction emojis to look for, e.g. " + DEFAULT_REACTIONS)
-        self.react_check.toggled.connect(self.react_edit.setEnabled)
-        react_row = QHBoxLayout()
-        react_row.addWidget(self.react_check)
-        react_row.addWidget(self.react_edit, 1)
         self.date_check = QCheckBox("Add the date to names  (26/9 → 26-9)")
         self.date_check.toggled.connect(self._parse_timer.start)
         self.skip_check = QCheckBox("Skip codes that are already saved")
@@ -183,8 +165,6 @@ class MainWindow(QMainWindow):
         form.addRow("Take", self.mode_combo)
         form.addRow("Album gap", self.gap_spin)
         form.addRow("Look back", self.lookback_spin)
-        if self.reactions:
-            form.addRow("Reactions", react_row)
         form.addRow("", self.date_check)
         form.addRow("", self.skip_check)
 
@@ -296,9 +276,6 @@ class MainWindow(QMainWindow):
         self.mode_combo.setCurrentIndex(max(idx, 0))
         self.gap_spin.setValue(int(s.value("gap_minutes", 5)))
         self.lookback_spin.setValue(int(s.value("lookback_days", 10)))
-        self.react_edit.setText(s.value("reactions", DEFAULT_REACTIONS))
-        self.react_check.setChecked(self.reactions and s.value("reactions_only", False, type=bool))
-        self.react_edit.setEnabled(self.react_check.isChecked())
         self.date_check.setChecked(s.value("include_date", False, type=bool))
         self.skip_check.setChecked(s.value("skip_existing", True, type=bool))
 
@@ -309,9 +286,6 @@ class MainWindow(QMainWindow):
         s.setValue("mode", self.mode_combo.currentData())
         s.setValue("gap_minutes", self.gap_spin.value())
         s.setValue("lookback_days", self.lookback_spin.value())
-        if self.reactions:
-            s.setValue("reactions_only", self.react_check.isChecked())
-            s.setValue("reactions", self.react_edit.text().strip())
         s.setValue("include_date", self.date_check.isChecked())
         s.setValue("skip_existing", self.skip_check.isChecked())
         s.sync()
@@ -405,7 +379,6 @@ class MainWindow(QMainWindow):
         if not out:
             QMessageBox.information(self, "Output folder", "Choose a folder to save the images in.")
             return
-        reactions = (self.react_edit.text().strip() or DEFAULT_REACTIONS) if self.react_check.isChecked() else ""
         if selected_only:
             rows = sorted({i.row() for i in self.table.selectionModel().selectedRows()})
             if not rows:
@@ -423,7 +396,6 @@ class MainWindow(QMainWindow):
             "neighbors": self.mode_combo.currentData(),
             "gap_minutes": self.gap_spin.value(),
             "lookback_days": self.lookback_spin.value(),
-            "reactions": reactions,
             "chat": self._chat_filter(),
         }
         self._save_settings()
@@ -455,7 +427,7 @@ class MainWindow(QMainWindow):
             self._connect()
 
     def _connect(self):
-        self.worker = WhatsAppWorker("reactions" if self.reactions else "basic")
+        self.worker = WhatsAppWorker("basic")
         self.worker.log.connect(self._log)
         self.worker.state_changed.connect(self._on_state)
         self.worker.chats_loaded.connect(self._on_chats)
@@ -550,8 +522,4 @@ class MainWindow(QMainWindow):
 
 
 def make_by_code() -> MainWindow:
-    return MainWindow("Fetch by Code", "fetch_by_code", reactions=False)
-
-
-def make_by_reaction() -> MainWindow:
-    return MainWindow("Fetch by Reaction", "fetch_by_reaction", reactions=True)
+    return MainWindow("Fetch by Code", "fetch_by_code")

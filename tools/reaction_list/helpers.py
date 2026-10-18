@@ -3,19 +3,27 @@ copied or saved."""
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 from core import codes as product_codes
 from tools.pathao_autofill.order_parser import find_codes, normalize_code
 
 # (settings key, button text, emojis looked for, tooltip). 😢 is WhatsApp's built-in "sad"
-# reaction, so it counts as 😥 (as in Fetch by Reaction).
+# reaction, so it counts as 😥. The "custom" choice looks for the emojis typed next to it.
+CUSTOM = "custom"
 CHOICES = [
     ("x", "❌", ("❌",), "Codes reacted with ❌"),
     ("nophone", "📵", ("📵",), "Codes reacted with 📵"),
     ("sad", "😥", ("😥", "😢"), "Codes reacted with 😥 (or 😢, WhatsApp's built-in sad reaction)"),
     ("all", "❌ 📵 😥", ("❌", "📵", "😥", "😢"), "Codes reacted with any of ❌ 📵 😥 (or 😢)"),
+    (CUSTOM, "Custom", (), "Codes reacted with the emojis you type in the box next to it"),
 ]
+DEFAULT_CHOICE = "all"
+
+# As wa_bridge_reactions.js reads reactions: '❤️' and '❤', '👍🏻' and '👍' are the same reaction.
+_EMOJI_MARKS = re.compile("[︎️\U0001F3FB-\U0001F3FF]")
+_ZWJ, _KEYCAP = "‍", "⃣"
 
 _BN_DIGITS = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
 # A date such as 16-10-2026 or 2026-10-16 is not a code.
@@ -25,6 +33,46 @@ _DATE = re.compile(r"(?<![0-9A-Za-z])(?:(?:[12]?\d|3[01])[-/.](?:0?[1-9]|1[0-2])
 _CODE = re.compile(r"\s*(" + product_codes.PREFIX + r")\s*" + product_codes.SEP + r"\s*(\d{1,6})[\s+\-]*", re.I)
 # A message naming more codes is a list or summary: its reactions are not about one code.
 MAX_CODES = 3
+
+
+def _is_flag_half(ch: str) -> bool:
+    return "\U0001F1E6" <= ch <= "\U0001F1FF"
+
+
+def _joins(cur: str, ch: str) -> bool:
+    """Whether `ch` is part of the emoji `cur` (a 👨‍👩‍👧 family, a 🇧🇩 flag, 1️⃣, a tag flag)."""
+    return (cur[-1] == _ZWJ or ch in (_ZWJ, _KEYCAP) or bool(unicodedata.combining(ch))
+            or "\U000E0020" <= ch <= "\U000E007F"
+            or (_is_flag_half(ch) and len(cur) == 1 and _is_flag_half(cur)))
+
+
+def split_emojis(text: str) -> list[str]:
+    """'👍 ❤️,🔥' -> ['👍', '❤', '🔥']: one entry per emoji, without skin tones and variation
+    marks, each once. Spaces and , ; . only separate."""
+    out: list[str] = []
+    cur = ""
+    for ch in _EMOJI_MARKS.sub("", text or ""):
+        if ch.isspace() or ch in ",;.":
+            if cur:
+                out.append(cur)
+            cur = ""
+        elif cur and _joins(cur, ch):
+            cur += ch
+        else:
+            if cur:
+                out.append(cur)
+            cur = ch
+    if cur:
+        out.append(cur)
+    return list(dict.fromkeys(out))
+
+
+def custom_reactions(text: str) -> tuple[str, ...]:
+    """The emojis typed for the custom choice; 😥 also brings 😢, as the 😥 button does."""
+    emojis = split_emojis(text)
+    if "😥" in emojis and "😢" not in emojis:
+        emojis.insert(emojis.index("😥") + 1, "😢")
+    return tuple(emojis)
 
 
 def normalize(code: str) -> str:
@@ -61,9 +109,11 @@ class Found:
     phones: list[str] = field(default_factory=list)
     chats: list[str] = field(default_factory=list)
     t: int = 0  # newest reacted message, unix seconds
+    photos: str = ""  # with "List + photos": what was saved ("3 photos", "No photos" …)
+    photos_path: str = ""  # the saved photo, or the folder of a code's photos
 
     def add(self, hit: dict):
-        self.emojis.update(hit.get("react") or "")
+        self.emojis.update(split_emojis(hit.get("react") or ""))
         for phone in hit.get("phones") or []:
             if phone not in self.phones:
                 self.phones.append(phone)

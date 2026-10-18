@@ -25,7 +25,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Dashboard
-import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.LocalShipping
@@ -76,7 +75,6 @@ object Nav {
     enum class Screen(val title: String, val icon: ImageVector, val busyKey: String?) {
         ENHANCER("Photo Enhancer", Icons.Filled.AutoAwesome, "enhancer"),
         FETCH_CODE("Fetch by Code", Icons.Filled.Image, "fetch_by_code"),
-        FETCH_REACTION("Fetch by Reaction", Icons.Filled.EmojiEmotions, "fetch_by_reaction"),
         REACTION_LIST("Reaction List", Icons.Filled.FormatListBulleted, "reaction_list"),
         MODEL_DETECT("Model Detect", Icons.Filled.Smartphone, "model_detect"),
         PATHAO("Pathao Auto-fill", Icons.Filled.LocalShipping, "pathao"),
@@ -121,7 +119,8 @@ private fun Shell(activity: Activity) {
     BackHandler(!drawer.isOpen && screen != Nav.Screen.ENHANCER) { Nav.go(Nav.Screen.ENHANCER) }
     LaunchedEffect(Unit) { WaEngine.open() }
 
-    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = !wa || drawer.isOpen, drawerContent = {
+    // The menu opens only with the ☰ button: a swipe that is a bit sideways while scrolling must not open it.
+    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = drawer.isOpen, drawerContent = {
         ModalDrawerSheet {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -161,9 +160,11 @@ private fun Shell(activity: Activity) {
         }
     }) {
         Box(Modifier.fillMaxSize()) {
-            // WhatsApp Web stays on screen all the time (behind the tools), so Android never pauses it.
+            // WhatsApp Web stays on screen all the time (behind the tools), so Android never pauses it. Behind a
+            // tool it is a 1 dp strip: full size, the whole page was drawn again under every frame of scrolling.
             AndroidView(factory = { WaEngine.view(activity) },
-                modifier = Modifier.fillMaxSize().padding(top = with(density) { waTop.toDp() }))
+                modifier = if (wa) Modifier.fillMaxSize().padding(top = with(density) { waTop.toDp() })
+                else Modifier.fillMaxWidth().height(1.dp))
             Column(Modifier.fillMaxSize().then(if (wa) Modifier else Modifier.background(Brand.BG))) {
                 Column(Modifier.background(Brand.BG).onGloballyPositioned { waTop = it.size.height }) {
                     TopAppBar(
@@ -179,7 +180,6 @@ private fun Shell(activity: Activity) {
                     when (screen) {
                         Nav.Screen.ENHANCER -> EnhancerScreen()
                         Nav.Screen.FETCH_CODE -> FetchScreen(com.covercanvasbd.boostimise.Tools.fetchByCode)
-                        Nav.Screen.FETCH_REACTION -> FetchScreen(com.covercanvasbd.boostimise.Tools.fetchByReaction)
                         Nav.Screen.REACTION_LIST -> ReactionListScreen()
                         Nav.Screen.MODEL_DETECT -> ModelDetectScreen()
                         Nav.Screen.PATHAO -> PathaoScreen(activity)

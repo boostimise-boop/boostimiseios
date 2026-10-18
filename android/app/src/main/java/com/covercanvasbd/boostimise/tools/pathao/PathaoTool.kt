@@ -28,6 +28,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import org.json.JSONObject
 import java.text.SimpleDateFormat
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.util.Date
@@ -51,6 +52,11 @@ class PathaoTool(private val scope: CoroutineScope) {
         const val SAVED_EARLIER = "Saved earlier"
         const val SKIPPED = "Skipped"
         const val NOT_FOUND = "Not found"
+        const val IN_PATHAO = "Saved (in Pathao)"   // "Check Pathao" found an order with this code as its Merchant Order ID
+
+        const val CHECK_DAYS = 45   // how far back "Check Pathao" reads the orders
+        private const val RESTART_DROP = 40   // a prefix starting its codes again (6-980 -> 6-47..6-1) drops at least this much...
+        private const val RESTART_RATIO = 3   // ...to at most a third of the numbers before
 
         val DEFAULT_CHATS = linkedMapOf(
             "2" to "Free Cover BD(2-)",
@@ -95,6 +101,41 @@ const __find = (spec) => {
   return null;
 };
 """
+        // The orders created from `from` to `to` (YYYY-MM-DD), read from the API behind the merchant panel's
+        // Orders page with the panel's own login (the result waits in window.__ccbdOrders). Archived orders
+        // are left out, like on that page, and so are return orders (RC...): they carry the merchant as
+        // recipient, and the delivery they return may be older.
+        private const val JS_PATHAO_ORDERS = """
+(function (from, to) {
+  window.__ccbdOrders = {pending: true};
+  (async () => {
+    let token = '';
+    try { token = JSON.parse(localStorage.getItem('pathaoMerchant:auth') || '{}').token || ''; } catch (e) {}
+    if (!token) return {error: 'login'};
+    const orders = [];
+    for (let page = 1; page <= 100; page++) {
+      const qs = new URLSearchParams({page: page, limit: 500, archive: 0, from_date: from, to_date: to});
+      let r;
+      for (let tries = 1; ; tries++) {   // "Too Many Requests": wait a little longer each time
+        r = await fetch('/api/v1/orders/all?' + qs, {headers: {Authorization: 'Bearer ' + token, Accept: 'application/json'}});
+        if (r.status !== 429 || tries === 6) break;
+        await new Promise(done => setTimeout(done, 3000 * tries));
+      }
+      if (r.status === 401 || r.status === 403) return {error: 'login'};
+      if (!r.ok) return {error: 'Pathao answered ' + r.status};
+      const d = (await r.json()).data || {};
+      for (const o of d.data || []) {
+        if (o.order_type === 'Return' || !o.merchant_order_id) continue;
+        orders.push([o.merchant_order_id, o.recipient_phone || '', o.recipient_name || '',
+                     o.order_amount == null ? '' : String(o.order_amount), o.order_created_at || '', o.order_consignment_id || '']);
+      }
+      if (!d.last_page || page >= d.last_page) break;
+    }
+    return {orders: orders};
+  })().then(r => { window.__ccbdOrders = r; }, e => { window.__ccbdOrders = {error: String(e)}; });
+})("__FROM__", "__TO__");
+"""
+
         // Remembers when Save was clicked, and every POST/PUT answer (Playwright saw these on the PC).
         private const val JS_HOOKS = """
 if (!window.__ccbdHooked) {
@@ -165,6 +206,13 @@ if (!window.__ccbdHooked) {
     var state by mutableStateOf("Open your code list, log in to Pathao below, then press Start.")
         private set
     var attention by mutableStateOf("")
+    /** The controls folded into one slim bar, so the Pathao page gets the screen (remembered). */
+    var compact by mutableStateOf(prefs.getBoolean("compact", false))
+        private set
+    fun fold(on: Boolean) {
+        compact = on
+        prefs.edit().putBoolean("compact", on).apply()
+    }
     var lookbackDays by mutableStateOf(prefs.getInt("lookback_days", 30))
     var writePhone by mutableStateOf(prefs.getBoolean("write_phone_to_list", true))
     var startFromBottom by mutableStateOf(prefs.getBoolean("start_from_bottom", true))
@@ -450,6 +498,10 @@ if (!window.__ccbdHooked) {
             log.add("${item.code}: ⚠ no phone number to write in the list - type it there yourself.")
             return
         }
+        writePhone(item, phone)
+    }
+
+    private suspend fun writePhone(item: Item, phone: String) {
         val changed = OrderParser.writePhoneToList(listText, item.code, phone)
         if (changed == null) {
             log.add("${item.code}: the list has no line with just ${item.code} any more - phone not written.")
@@ -465,6 +517,166 @@ if (!window.__ccbdHooked) {
                 log.add("${item.code}: ⚠ could not write $phone in $listName (${e.message}) - type it there yourself.")
             }
         } else log.add("${item.code}: wrote $phone next to it in the list (copy the list to keep it).")
+    }
+
+    // ---- Check Pathao ------------------------------------------------------------------------
+    /** One Pathao order: Merchant Order ID, phone, name, amount, created time, consignment id. */
+    private class PathaoOrder(val id: String, val phone: String, val name: String, val amount: String,
+                              val created: String, val consignment: String)
+
+    var checking by mutableStateOf(false)
+        private set
+
+    private fun median(v: List<Int>): Double {
+        val s = v.sorted()
+        return if (s.size % 2 == 1) s[s.size / 2].toDouble() else (s[s.size / 2 - 1] + s[s.size / 2]) / 2.0
+    }
+
+    /**
+     * {prefix: created time} of when each prefix last started its codes again from 1. The same code
+     * comes back in every round (5-36 on 5 Oct and again after 5-1 on 13 Oct), so only the orders of
+     * the current round say whether a code of the list is in Pathao. A restart is where the 10 orders
+     * before were high and the 10 from there on are low (a list is often saved from the bottom, so a
+     * round can start 6-47, 6-46...); one late order of an old round in between, or a few late ones of
+     * this round, don't count as one.
+     */
+    private fun roundStarts(orders: List<PathaoOrder>): Map<String, String> {
+        val byPrefix = LinkedHashMap<String, MutableList<Pair<String, Int>>>()
+        for (o in orders) for (code in OrderParser.findCodes(o.id)) {
+            val (prefix, number) = OrderParser.splitCode(code)
+            byPrefix.getOrPut(prefix) { mutableListOf() } += o.created to number
+        }
+        val starts = LinkedHashMap<String, String>()
+        for ((prefix, list) in byPrefix) {
+            val rows = list.sortedWith(compareBy({ it.first }, { it.second }))
+            val nums = rows.map { it.second }
+            var last = -1
+            for (i in 1 until nums.size) {
+                val before = median(nums.subList(maxOf(0, i - 10), i))
+                val after = median(nums.subList(i, minOf(nums.size, i + 10)))
+                if (before - after >= RESTART_DROP && after * RESTART_RATIO <= before && nums[i] - after < RESTART_DROP) {
+                    if (last < 0 || i - last > 10) starts[prefix] = rows[i].first   // the first order of a new round
+                    last = i
+                }
+            }
+        }
+        return starts
+    }
+
+    /** Reads the orders the merchant panel lists (the Pathao page below must be open and logged in). */
+    private suspend fun readPathaoOrders(): List<PathaoOrder> {
+        val host = eval("location.hostname") as? String
+        if (host == null || !host.endsWith("pathao.com")) {
+            throw NeedUser("Open merchant.pathao.com in the page below and log in, then tap Check Pathao again.")
+        }
+        val today = LocalDate.now()
+        eval(JS_PATHAO_ORDERS.replace("__FROM__", today.minusDays(CHECK_DAYS.toLong()).toString()).replace("__TO__", today.toString()))
+        val end = System.currentTimeMillis() + 4 * 60_000L
+        while (System.currentTimeMillis() < end) {
+            delay(1000)
+            val res = eval("window.__ccbdOrders") as? JSONObject
+            if (res == null) throw NeedUser("The Pathao page changed while its orders were read. Tap Check Pathao again.")
+            if (res.optBoolean("pending")) continue
+            val error = res.optString("error")
+            if (error == "login") throw NeedUser("Pathao is not logged in. Log in to merchant.pathao.com in the page below, then tap Check Pathao again.")
+            if (error.isNotEmpty()) throw NeedUser("Could not read the orders from Pathao: $error.")
+            val a = res.optJSONArray("orders")
+            return (0 until (a?.length() ?: 0)).mapNotNull { i ->
+                val r = a?.optJSONArray(i) ?: return@mapNotNull null
+                PathaoOrder(r.optString(0), r.optString(1), r.optString(2), r.optString(3), r.optString(4), r.optString(5))
+            }
+        }
+        throw NeedUser("Pathao took too long to answer. Tap Check Pathao again.")
+    }
+
+    /**
+     * Looks the loaded codes up in Pathao's orders (the code is an order's Merchant Order ID), counting only
+     * the orders of each prefix's current round of codes (see roundStarts). A code found there is marked as
+     * saved with that order's phone, and the phone is written next to it in the list; the codes not found
+     * stay as they are.
+     */
+    fun checkPathao() {
+        if (items.isEmpty()) {
+            state = "Open or paste your code list first."
+            return
+        }
+        if (checking) return
+        checking = true
+        attention = ""
+        scope.launch {
+            try {
+                doCheckPathao()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: NeedUser) {
+                attention = e.message ?: ""
+            } catch (e: Exception) {
+                attention = "Error: ${e.message}"
+                log.add("Error: ${e.message}")
+            } finally {
+                checking = false
+            }
+        }
+    }
+
+    private suspend fun doCheckPathao() {
+        state = "Reading the orders from Pathao…"
+        val orders = readPathaoOrders()
+        val starts = roundStarts(orders)
+        val byCode = LinkedHashMap<String, MutableList<PathaoOrder>>()
+        for (o in orders) for (code in OrderParser.findCodes(o.id)) {   // "2-257+258": one order for both codes
+            if (o.created >= (starts[OrderParser.splitCode(code).first] ?: "")) byCode.getOrPut(code) { mutableListOf() } += o
+        }
+        for (prefix in items.map { OrderParser.splitCode(it.code).first }.distinct()) {
+            starts[prefix]?.let { log.add("$prefix-: codes started again from 1 on ${it.take(16)} - older orders are not counted.") }
+        }
+
+        var text = listText
+        val found = mutableListOf<String>()
+        val missing = mutableListOf<String>()
+        var written = 0
+        for (item in items.toList()) {
+            val hits = byCode[item.code]?.sortedByDescending { it.created }
+            if (hits.isNullOrEmpty()) {
+                missing += item.code
+                continue
+            }
+            if (item === cur && item.status == FILLED) {
+                log.add("${item.code}: ⚠ Pathao already has an order ${hits[0].consignment} with this code - it is on the form now, check it is not saved twice.")
+                continue
+            }
+            val o = hits[0]
+            val phones = hits.flatMap { OrderParser.findPhones(it.phone) }.distinct()
+            val phone = phones.firstOrNull() ?: o.phone
+            val old = item.order
+            item.order = OrderParser.Order(item.code, o.name, phone, old?.phone2 ?: "", old?.address ?: "", o.amount, emptyList())
+            item.status = IN_PATHAO
+            found += item.code
+            if (hits.size > 1) {
+                log.add("${item.code}: ⚠ ${hits.size} Pathao orders of the current round have this code " +
+                    "(${hits.joinToString(", ") { it.consignment + " " + it.phone }}). The newest is shown.")
+            }
+            if (writePhone && phones.isNotEmpty()) {
+                OrderParser.writePhoneToList(text, item.code, phones[0])?.let { text = it; written++ }
+            }
+        }
+
+        if (written > 0) {
+            listText = text
+            val uri = listUri
+            if (uri != null) {
+                try {
+                    Storage.writeText(uri, text)
+                } catch (e: Exception) {
+                    log.add("⚠ could not write the phones in $listName (${e.message}) - type them there yourself.")
+                    written = 0
+                }
+            }
+        }
+        log.add("Read ${orders.size} Pathao orders of the last $CHECK_DAYS days; ${found.size} of the ${items.size} codes are among them" +
+            (if (written > 0) ", phone written next to $written in $listName" else "") + ".")
+        if (missing.isNotEmpty()) log.add("Not in Pathao (${missing.size}): ${missing.joinToString(", ")}")
+        state = "${found.size} of ${items.size} codes are already in Pathao; ${missing.size} are not."
     }
 
     // ---- WhatsApp ----------------------------------------------------------------------------

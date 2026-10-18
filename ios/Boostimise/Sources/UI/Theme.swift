@@ -30,8 +30,7 @@ enum Brand {
 @MainActor
 enum Tools {
     static let enhancer = EnhancerTool()
-    static let fetchByCode = FetchTool(key: "fetch_by_code", title: "Fetch by Code", reactions: false)
-    static let fetchByReaction = FetchTool(key: "fetch_by_reaction", title: "Fetch by Reaction", reactions: true)
+    static let fetchByCode = FetchTool(key: "fetch_by_code", title: "Fetch by Code")
     static let reactionList = ReactionListTool()
     static let modelDetect = ModelDetectTool()
     static let pathao = PathaoTool()
@@ -42,7 +41,7 @@ final class Nav {
     static let shared = Nav()
 
     enum Screen: CaseIterable, Identifiable {
-        case enhancer, fetchCode, fetchReaction, reactionList, modelDetect, pathao, whatsapp, dashboard, plans
+        case enhancer, fetchCode, reactionList, modelDetect, pathao, whatsapp, dashboard, plans
 
         var id: Self { self }
 
@@ -50,7 +49,6 @@ final class Nav {
             switch self {
             case .enhancer: return "Photo Enhancer"
             case .fetchCode: return "Fetch by Code"
-            case .fetchReaction: return "Fetch by Reaction"
             case .reactionList: return "Reaction List"
             case .modelDetect: return "Model Detect"
             case .pathao: return "Pathao Auto-fill"
@@ -64,7 +62,6 @@ final class Nav {
             switch self {
             case .enhancer: return "sparkles"
             case .fetchCode: return "photo.on.rectangle"
-            case .fetchReaction: return "face.smiling"
             case .reactionList: return "list.bullet"
             case .modelDetect: return "iphone"
             case .pathao: return "shippingbox"
@@ -78,7 +75,6 @@ final class Nav {
             switch self {
             case .enhancer: return "enhancer"
             case .fetchCode: return "fetch_by_code"
-            case .fetchReaction: return "fetch_by_reaction"
             case .reactionList: return "reaction_list"
             case .modelDetect: return "model_detect"
             case .pathao: return "pathao"

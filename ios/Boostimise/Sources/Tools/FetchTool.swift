@@ -53,9 +53,6 @@ func listInName(_ list: String, _ name: String) -> Bool {
     return Rx("(?<![0-9A-Za-z])" + Rx.escape(String(list.dropLast())) + #"\s*-(?!\s*\d)"#, ignoreCase: true).contains(name)
 }
 
-/// 😢 is WhatsApp's built-in "sad" reaction, so it is listed next to 😥.
-let DEFAULT_REACTIONS = "❌ 📵 😥 😢"
-
 func dateText(_ d: Date, _ format: String) -> String {
     let f = DateFormatter()
     f.locale = Locale(identifier: "en_US_POSIX")
@@ -67,7 +64,7 @@ func sha256Hex(_ data: Data) -> String {
     SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
 
-/// Fetch by Code and Fetch by Reaction (tools/whatsapp_fetch): finds the photos of each code in the
+/// Fetch by Code (tools/whatsapp_fetch): finds the photos of each code in the
 /// WhatsApp chats and saves them as "2-558 Realme C85.jpg" in Files › Boostimise › <tool>.
 @MainActor @Observable
 final class FetchTool {
@@ -83,7 +80,6 @@ final class FetchTool {
 
     let key: String
     let title: String
-    let reactions: Bool
     @ObservationIgnored private let prefs: Prefs
     var codeText = ""
     private(set) var rows: [Row] = []
@@ -100,8 +96,6 @@ final class FetchTool {
     var neighbors: String
     var gapMinutes: Int
     var lookbackDays: Int
-    var reactionsOnly: Bool
-    var reactionText: String
     var includeDate: Bool
     var skipExisting: Bool
     /// Each list in its own chat: the 6- codes in "Customise Phone Case (6-)", the 5a- codes in …
@@ -109,10 +103,9 @@ final class FetchTool {
     /// The chat of each list ("6-" -> chat); a list without one is searched in `chat`.
     var listChats: [String: ChatFilter] = [:]
 
-    init(key: String, title: String, reactions: Bool) {
+    init(key: String, title: String) {
         self.key = key
         self.title = title
-        self.reactions = reactions
         let p = Storage.prefs(key)
         prefs = p
         folder = p.string("folder", title)
@@ -120,8 +113,6 @@ final class FetchTool {
         neighbors = p.string("neighbors", "after")
         gapMinutes = p.int("gap_minutes", 5)
         lookbackDays = p.int("lookback_days", 10)
-        reactionsOnly = reactions && p.bool("reactions_only", true)
-        reactionText = p.string("reactions", DEFAULT_REACTIONS)
         includeDate = p.bool("include_date", false)
         skipExisting = p.bool("skip_existing", true)
         perList = p.bool("per_list", false)
@@ -144,8 +135,6 @@ final class FetchTool {
         prefs.set("neighbors", neighbors)
         prefs.set("gap_minutes", gapMinutes)
         prefs.set("lookback_days", lookbackDays)
-        prefs.set("reactions_only", reactionsOnly)
-        prefs.set("reactions", reactionText)
         prefs.set("include_date", includeDate)
         prefs.set("skip_existing", skipExisting)
         prefs.set("per_list", perList)
@@ -246,8 +235,7 @@ final class FetchTool {
             }
         }
         if !todo.isEmpty {
-            let wanted = reactions && reactionsOnly ? reactionText.trimmed.ifEmpty(DEFAULT_REACTIONS) : ""
-            let scan = try await self.scan(todo, wanted)
+            let scan = try await self.scan(todo)
             for (i, pair) in todo.enumerated() {
                 let (row, base) = pair
                 let images = (scan.found[String(i)] ?? [:]).values.sorted { $0.int("t") < $1.int("t") }
@@ -255,7 +243,7 @@ final class FetchTool {
                 var n = 0
                 do {
                     (kind, n) = try await downloadAndSave(row, base, images, mentions: scan.mentions[String(i)] ?? 0,
-                                                          unreacted: scan.unreacted[String(i)] ?? 0, since: scan.since, reactions: wanted)
+                                                          since: scan.since)
                 } catch is CancellationError {
                     throw CancellationError()
                 } catch {
@@ -280,15 +268,14 @@ final class FetchTool {
     private struct Scan {
         var found: [String: [String: JSON]]
         var mentions: [String: Int]
-        var unreacted: [String: Int]
         var since: Date
         var chats: Int
     }
 
-    private func scan(_ todo: [(Row, String)], _ wanted: String) async throws -> Scan {
+    private func scan(_ todo: [(Row, String)]) async throws -> Scan {
         let since = Codes.scanSince(todo.map { $0.0.item }, lookbackDays: lookbackDays)
         let sinceTs = Int(since.timeIntervalSince1970)
-        let api = reactions ? "window.__waf_reactions" : "window.__waf_basic"
+        let api = "window.__waf_basic"
         let dd = dateText(since, "dd/MM/yyyy")
         // One pass per chat filter: all codes in `chat`, or with perList each list's codes in its own chat.
         var groupOrder: [ChatFilter] = []
@@ -307,7 +294,6 @@ final class FetchTool {
         let total = chatCount + todo.count
         progress = 0
         log.add("Reading \(chatCount) chat(s) active since \(dd) for \(todo.count) code(s)…")
-        if !wanted.isEmpty { log.add("Only photos reacted with \(wanted).") }
         for (r, _) in todo {
             r.kind = "working"
             r.text = "Reading chats…"
@@ -315,7 +301,6 @@ final class FetchTool {
 
         var found: [String: [String: JSON]] = [:]
         var mentions: [String: Int] = [:]
-        var unreacted: [String: Int] = [:]
         var short = 0
         // (chat, the options with that pass's codes) for every chat to read
         var reads: [(JSON, String)] = []
@@ -331,7 +316,7 @@ final class FetchTool {
             }
             let codes: [JSON] = keys.map { jsonOf(("key", String($0)), ("pattern", Codes.codePattern(todo[$0].0.item.code))) }
             let opts = JSONTools.string(jsonOf(("codes", codes), ("since", sinceTs), ("neighbors", neighbors), ("gapMinutes", gapMinutes),
-                                               ("maxNeighbors", 30), ("maxLoads", 300), ("reactions", wanted)))
+                                               ("maxNeighbors", 30), ("maxLoads", 300)))
             for t in targets { reads.append((t, opts)) }
         }
         for (n, read) in reads.enumerated() {
@@ -361,7 +346,6 @@ final class FetchTool {
                 if let idx = Int(k), idx < todo.count { todo[idx].0.text = "Reading chats… \(bucket.count) photo(s) found" }
             }
             for (k, v) in res.obj("mentions") ?? [:] { mentions[k, default: 0] += (v as? NSNumber)?.intValue ?? 0 }
-            for (k, v) in res.obj("unreacted") ?? [:] { unreacted[k, default: 0] += (v as? NSNumber)?.intValue ?? 0 }
             if !hitKeys.isEmpty {
                 log.add("\(t): photos for " + hitKeys.compactMap { Int($0) }.filter { $0 < todo.count }.map { todo[$0].0.item.code }
                     .joined(separator: ", "))
@@ -370,16 +354,15 @@ final class FetchTool {
             progress = Double(n + 1) / Double(max(total, 1))
         }
         if short > 0 { log.add("Note: \(short) chat(s) have no older messages on WhatsApp Web (before \(dd)).") }
-        return Scan(found: found, mentions: mentions, unreacted: unreacted, since: since, chats: chatCount)
+        return Scan(found: found, mentions: mentions, since: since, chats: chatCount)
     }
 
-    private func downloadAndSave(_ row: Row, _ base: String, _ images: [JSON], mentions: Int, unreacted: Int,
-                                 since: Date, reactions: String) async throws -> (String, Int) {
+    private func downloadAndSave(_ row: Row, _ base: String, _ images: [JSON], mentions: Int,
+                                 since: Date) async throws -> (String, Int) {
         let code = row.item.code
         if images.isEmpty {
             let detail: String
-            if unreacted > 0 { detail = "\(unreacted) photo(s) found, none reacted with \(reactions)" }
-            else if mentions > 0 { detail = "code is in \(mentions) message(s), none with a photo" }
+            if mentions > 0 { detail = "code is in \(mentions) message(s), none with a photo" }
             else { detail = "not in any chat since \(dateText(since, "dd/MM"))" }
             row.kind = "none"
             row.text = "No photos (\(detail))"

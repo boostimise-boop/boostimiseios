@@ -83,10 +83,6 @@ struct FetchScreen: View {
                     NumberField(label: "Album gap", value: $t.gapMinutes, range: 1...240, suffix: "min")
                     NumberField(label: "Look back", value: $t.lookbackDays, range: 1...365, suffix: "days")
                 }
-                if t.reactions {
-                    CheckRow("Only photos reacted with", $t.reactionsOnly)
-                    if t.reactionsOnly { LabeledField(label: "Reactions", text: $t.reactionText, placeholder: DEFAULT_REACTIONS) }
-                }
                 CheckRow("Add the date to names (26/9 → 26-9)", $t.includeDate)
                 CheckRow("Skip codes that are already saved", $t.skipExisting)
                 LabeledField(label: "Save in Files › Boostimise ›", text: $t.folder)
@@ -156,7 +152,12 @@ struct ReactionListScreen: View {
                 Flow {
                     ForEach(CHOICES, id: \.self) { c in Chip(label: c.label, selected: c == t.choice) { t.choice = c } }
                 }
-                Hint("😥 also counts 😢 (WhatsApp's built-in sad reaction).")
+                LabeledField(label: "Custom reactions", text: $t.customText, placeholder: "Type your emojis, e.g. 👍 ❤️ 🔥")
+                    .disabled(t.running)
+                    .onChange(of: t.customText) { _, _ in
+                        if let c = CHOICES.first(where: { $0.key == CUSTOM }), !t.customText.trimmed.isEmpty { t.choice = c }
+                    }
+                Hint("😥 also counts 😢 (WhatsApp's built-in sad reaction). Skin tones count as one reaction (👍🏻 = 👍).")
             }
             Card(title: "Codes (optional)", hint: "Leave empty to list every code that got the reaction in the chats read.") {
                 CodeListBox(text: $t.codeText)
@@ -164,9 +165,21 @@ struct ReactionListScreen: View {
             Card(title: "Settings") {
                 ChatFilterPicker(filter: $t.chat)
                 NumberField(label: "Look back", value: $t.lookbackDays, range: 1...365, suffix: "days")
+                Text("Fetch").font(.system(size: 12)).foregroundStyle(Brand.text2)
+                Flow {
+                    Chip(label: "List only", selected: !t.withPhotos) { if !t.running { t.withPhotos = false } }
+                    Chip(label: "List + photos", selected: t.withPhotos) { if !t.running { t.withPhotos = true } }
+                }
+                if t.withPhotos {
+                    LabeledField(label: "Save in Files › Boostimise ›", text: $t.folder)
+                        .disabled(t.running)
+                    Hint("Saves each listed code's reacted photos as \"2-558 Realme C85.jpg\". A code whose message has the " +
+                         "reaction gets all its photos; otherwise only the photos with the reaction.")
+                }
             }
             Card {
-                RunBar(running: t.running, progress: t.progress, activity: t.activity, summary: t.summary, startLabel: "Fetch list",
+                RunBar(running: t.running, progress: t.progress, activity: t.activity, summary: t.summary,
+                       startLabel: t.withPhotos ? "Fetch list + photos" : "Fetch list",
                        onStart: { t.start() }, onStop: { t.stop() })
             }
             if !t.results.isEmpty {
@@ -177,14 +190,22 @@ struct ReactionListScreen: View {
                     }
                     ForEach(Array(t.results.enumerated()), id: \.element.id) { n, f in
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("\(n + 1). \(f.code) \(f.name) \(f.react(t.choice.emojis))").font(.system(size: 15, weight: .medium))
+                            Text("\(n + 1). \(f.code) \(f.name) \(f.react(t.shown))").font(.system(size: 15, weight: .medium))
                                 .foregroundStyle(Brand.navy)
                             if !f.phones.isEmpty { Text(f.phones.joined(separator: ", ")).font(.system(size: 13)) }
                             Text(f.chats.joined(separator: ", ")).font(.system(size: 12)).foregroundStyle(Brand.muted)
+                            if !f.photos.isEmpty { Text("Photos: \(f.photos)").font(.system(size: 12)).foregroundStyle(Brand.text2) }
                         }
                         .padding(6)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(n % 2 == 0 ? Brand.bg : Brand.surface)
+                    }
+                    if t.results.contains(where: { !$0.photos.isEmpty }) {
+                        HStack {
+                            Hint("Photos saved in \(Storage.displayPath(t.folderName))")
+                            Spacer()
+                            LinkButton("Open") { Storage.openInFiles(t.folderName) }
+                        }
                     }
                 }
             }

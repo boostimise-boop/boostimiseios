@@ -18,8 +18,8 @@ from core import whatsapp
 from .helpers import CodeItem, code_pattern, existing_output, ext_for, save_images, scan_since
 
 HERE = Path(__file__).resolve().parent
-# wa_bridge.js: photos of each code. wa_bridge_reactions.js: the same, and can keep only the
-# photos with chosen reactions (it also gives nearby photos to every code in a message).
+# wa_bridge.js: photos of each code (Fetch by Code). wa_bridge_reactions.js: the same, and reads
+# reactions (the Reaction List tool uses it).
 BRIDGES = {"basic": HERE / "wa_bridge.js", "reactions": HERE / "wa_bridge_reactions.js"}
 
 

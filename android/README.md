@@ -7,10 +7,9 @@ plans and dashboard as boostimise.com, and the same WhatsApp tools.
 |---|---|
 | **Photo Enhancer** | Pick photos (or *Share → Boostimise* from WhatsApp / the gallery), Enhance, compare before / after, download PNG / JPG or all as ZIP. Saved in *Pictures/Boostimise/Enhanced*. |
 | **Fetch by Code** | Finds each code's photos in your WhatsApp chats and saves them as `2-558 Realme C85.jpg` in *Pictures/Boostimise/Fetch by Code*. With *A chat for each list* the 6- codes are searched only in the 6- list's chat ("Customise Phone Case (6-)"), the 5a- codes in the 5a- chat …, filled in from chat names and changeable. |
-| **Fetch by Reaction** | The same, keeping only photos reacted with ❌ 📵 😥 😢 … |
-| **Reaction List** | The codes reacted with ❌, 📵 or 😥, with the phone number from the order message. *Copy list* / *Save .txt*. |
+| **Reaction List** | The codes reacted with ❌, 📵, 😥 or the emojis you type under *Custom*, with the phone number from the order message. *Copy list* / *Save .txt*. *Fetch: List + photos* also saves their reacted photos as `2-558 Realme C85.jpg` in *Pictures/Boostimise/Reaction List*. |
 | **Model Detect** | Finds each code's photos and writes the phone model next to the code: names written in the chat, text printed in the photos (read on the phone), or Claude (your API key). |
-| **Pathao Auto-fill** | Reads the order message of each code and fills Pathao's New Delivery form (merchant.pathao.com, inside the app). You check it and tap Save; the next code fills itself. |
+| **Pathao Auto-fill** | Reads the order message of each code and fills Pathao's New Delivery form (merchant.pathao.com, inside the app). You check it and tap Save; the next code fills itself. **Check Pathao** marks the codes of the list that already have a Pathao order (the code is its Merchant Order ID, counting only the prefix's current round of codes) and writes each one's phone next to it in the list. |
 | **WhatsApp** | The one WhatsApp Web every tool uses. |
 | **Dashboard / Plans** | As on the website. |
 

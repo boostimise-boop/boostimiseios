@@ -7,12 +7,13 @@ import copy
 import json
 import os
 import queue
+import statistics
 import threading
 import time
 import traceback
 import unicodedata
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from core import whatsapp
 from core.paths import data_dir
@@ -69,6 +70,7 @@ SAVED = "Saved ✓"
 SAVED_EARLIER = "Saved earlier"
 SKIPPED = "Skipped"
 NOT_FOUND = "Not found"
+IN_PATHAO = "Saved (in Pathao)"  # "Check Pathao" found an order with this code as its Merchant Order ID
 
 # ---------------------------------------------------------------------------
 # JavaScript run inside the pages
@@ -146,6 +148,68 @@ JS_FIELD_VALUE = "(spec) => {" + _JS_FIND + r"""
 }"""
 
 JS_CLEAR_SAVE_FLAG = "() => { try { sessionStorage.removeItem('__ccbdSave'); } catch (e) {} }"
+
+# The orders created from `from` to `to` (YYYY-MM-DD), read from the API behind the merchant panel's
+# Orders page with the panel's own login. Archived orders are left out, like on that page, and so are
+# return orders (RC...): they carry the merchant as recipient, and the delivery they return may be older.
+JS_PATHAO_ORDERS = r"""async ({from, to}) => {
+  let token = '';
+  try { token = JSON.parse(localStorage.getItem('pathaoMerchant:auth') || '{}').token || ''; } catch (e) {}
+  if (!token) return {error: 'login'};
+  const orders = [];
+  for (let page = 1; page <= 100; page++) {
+    const qs = new URLSearchParams({page, limit: 500, archive: 0, from_date: from, to_date: to});
+    let r;
+    for (let tries = 1; ; tries++) {  // "Too Many Requests": wait a little longer each time
+      r = await fetch('/api/v1/orders/all?' + qs, {headers: {Authorization: 'Bearer ' + token, Accept: 'application/json'}});
+      if (r.status !== 429 || tries === 6) break;
+      await new Promise(done => setTimeout(done, 3000 * tries));
+    }
+    if (r.status === 401 || r.status === 403) return {error: 'login'};
+    if (!r.ok) return {error: 'Pathao answered ' + r.status};
+    const d = (await r.json()).data || {};
+    for (const o of d.data || []) {
+      if (o.order_type === 'Return') continue;
+      orders.push({id: o.merchant_order_id || '', phone: o.recipient_phone || '', name: o.recipient_name || '',
+                   amount: o.order_amount, created: o.order_created_at || '', status: o.order_status || '',
+                   consignment: o.order_consignment_id || ''});
+    }
+    if (!d.last_page || page >= d.last_page) break;
+  }
+  return {orders};
+}"""
+
+PATHAO_LOOKBACK_DAYS = 45  # how far back "Check Pathao" reads the orders
+RESTART_DROP = 40  # a prefix starting its codes again (6-980 -> 6-47..6-1) drops at least this much...
+RESTART_RATIO = 3  # ...to at most a third of the numbers before
+
+
+def round_starts(orders):
+    """{prefix: created time} of when each prefix last started its codes again from 1. The same
+    code comes back in every round (5-36 on 5 Oct and again after 5-1 on 13 Oct), so only the
+    orders of the current round say whether a code of the list is in Pathao. A restart is where the
+    10 orders before were high and the 10 from there on are low (a list is often saved from the
+    bottom, so a round can start 6-47, 6-46...); one late order of an old round in between, or a
+    few late ones of this round, don't count as one."""
+    by_prefix = collections.defaultdict(list)
+    for o in orders:
+        for code in find_codes(o["id"]):
+            prefix, number = split_code(code)
+            by_prefix[prefix].append((o["created"], number))
+    starts = {}
+    for prefix, rows in by_prefix.items():
+        rows.sort()
+        nums = [n for _, n in rows]
+        last = None
+        for i in range(1, len(nums)):
+            before, after = statistics.median(nums[max(0, i - 10):i]), statistics.median(nums[i:i + 10])
+            if (before - after >= RESTART_DROP and after * RESTART_RATIO <= before
+                    and nums[i] - after < RESTART_DROP):  # this order is one of the low ones itself
+                if last is None or i - last > 10:
+                    starts[prefix] = rows[i][0]  # the first order of a new round
+                last = i
+    return starts
+
 
 JS_WA_READY = """() => !!document.querySelector('#pane-side, #side, [aria-label="Chat list"]')"""
 
@@ -532,6 +596,8 @@ class Worker(threading.Thread):
             self.process(self.cur, prepare=False, explicit=True)
         elif kind == "refill":
             self.refill(cmd[1], cmd[2])
+        elif kind == "check_pathao":
+            self.check_pathao()
 
     # -- browser ---------------------------------------------------------
     def connect(self):
@@ -1008,6 +1074,70 @@ class Worker(threading.Thread):
             self.log(f"{code}: wrote {phones[0]} next to it in {os.path.basename(path)}.")
         else:
             self.log(f"{code}: {os.path.basename(path)} has no line with just {code} any more - phone not written.")
+
+    def check_pathao(self):
+        """Looks the loaded codes up in Pathao's orders (the code is an order's Merchant Order ID),
+        counting only the orders of each prefix's current round of codes (see round_starts). A code
+        found there is marked as saved with that order's phone, and the phone is written next to it
+        in the list file; the codes not found stay as they are."""
+        if not self.items:
+            self.log("Load the code list first.")
+            return
+        self.emit("state", "Reading the orders from Pathao...", "busy")
+        today = datetime.now()
+        span = {"from": (today - timedelta(days=PATHAO_LOOKBACK_DAYS)).strftime("%Y-%m-%d"),
+                "to": today.strftime("%Y-%m-%d")}
+        page = self.pathao_page()
+        try:
+            res = page.evaluate(JS_PATHAO_ORDERS, span)
+        except Exception as e:
+            raise NeedUser(f"Could not read the orders from Pathao ({e}). Open merchant.pathao.com in the browser and try again.")
+        if res.get("error") == "login":
+            raise NeedUser("Pathao is not logged in. Log in to merchant.pathao.com in the browser, then press Check Pathao again.")
+        if res.get("error"):
+            raise NeedUser(f"Could not read the orders from Pathao: {res['error']}.")
+        starts = round_starts(res["orders"])
+        by_code = {}
+        for o in res["orders"]:  # newest first, as the Orders page lists them
+            for code in find_codes(o["id"]):  # "2-257+258": one order for both codes
+                if o["created"] >= starts.get(split_code(code)[0], ""):
+                    by_code.setdefault(code, []).append(o)
+        for prefix in dict.fromkeys(split_code(it["code"])[0] for it in self.items):
+            if prefix in starts:
+                self.log(f"{prefix}-: codes started again from 1 on {starts[prefix][:16]} - older orders are not counted.")
+
+        write = self.settings.get("write_phone_to_list", True)
+        found, missing, written = [], [], 0
+        for idx, item in enumerate(self.items):
+            code, hits = item["code"], by_code.get(item["code"])
+            if not hits:
+                missing.append(code)
+                continue
+            if idx == self.cur and item["status"] == FILLED:
+                self.log(f"{code}: ⚠ Pathao already has an order {hits[0]['consignment']} with this code - "
+                         f"it is on the form now, check it is not saved twice.")
+                continue
+            phones = list(dict.fromkeys(p for o in hits for p in find_phones(o["phone"])))
+            o = hits[0]
+            item["data"] = {**(item.get("data") or {}), "name": o["name"], "phone": phones[0] if phones else o["phone"],
+                            "amount": str(o["amount"] if o["amount"] is not None else "")}
+            self.set_status(idx, IN_PATHAO)
+            found.append(code)
+            if len(hits) > 1:
+                self.log(f"{code}: ⚠ {len(hits)} Pathao orders of the current round have this code "
+                         f"({', '.join(h['consignment'] + ' ' + h['phone'] for h in hits)}). The newest is shown.")
+            if write and phones and self.list_file:
+                try:
+                    written += write_phone_to_list(self.list_file, code, phones[0])
+                except OSError as e:
+                    self.log(f"{code}: ⚠ could not write {phones[0]} in {os.path.basename(self.list_file)} ({e}).")
+
+        self.log(f"Read {len(res['orders'])} Pathao orders of the last {PATHAO_LOOKBACK_DAYS} days; {len(found)} of the "
+                 f"{len(self.items)} codes are among them" + (f", phone written next to {written} in "
+                                                             f"{os.path.basename(self.list_file)}" if written else "") + ".")
+        if missing:
+            self.log(f"Not in Pathao ({len(missing)}): " + ", ".join(missing))
+        self.emit("state", f"{len(found)} of {len(self.items)} codes are already in Pathao; {len(missing)} are not.", "ok")
 
     # -- the main flow -----------------------------------------------------
     def _next_pending(self):

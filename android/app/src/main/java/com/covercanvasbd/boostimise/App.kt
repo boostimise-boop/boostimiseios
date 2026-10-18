@@ -19,7 +19,6 @@ object Tools {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     lateinit var enhancer: EnhancerTool
     lateinit var fetchByCode: FetchTool
-    lateinit var fetchByReaction: FetchTool
     lateinit var reactionList: ReactionListTool
     lateinit var modelDetect: ModelDetectTool
     lateinit var pathao: PathaoTool
@@ -33,8 +32,7 @@ class App : Application() {
         Account.init(this, Tools.scope)
         WaEngine.init(this, Tools.scope)
         Tools.enhancer = EnhancerTool(Tools.scope)
-        Tools.fetchByCode = FetchTool("fetch_by_code", "Fetch by Code", reactions = false, scope = Tools.scope)
-        Tools.fetchByReaction = FetchTool("fetch_by_reaction", "Fetch by Reaction", reactions = true, scope = Tools.scope)
+        Tools.fetchByCode = FetchTool("fetch_by_code", "Fetch by Code", scope = Tools.scope)
         Tools.reactionList = ReactionListTool(Tools.scope)
         Tools.modelDetect = ModelDetectTool(Tools.scope)
         Tools.pathao = PathaoTool(Tools.scope)

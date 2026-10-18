@@ -10,9 +10,8 @@ called **CasePilot**, and up to 2.1 **CoverDesk**; updating keeps all settings a
 |---|---|---|
 | **Photo Enhancer** | AI photo enhancer and upscaler (2× / 4×, face and photo restoration), the same as [boostimise.com](https://boostimise.com): drop, pick or paste photos, compare before / after, download PNG, JPG or all as ZIP. | new (the website's enhancer) |
 | **Fetch by Code** | Finds product photos in your WhatsApp chats by code and saves them (`2-558 Realme C85.jpg`). | `fetchbyrandomcode` (PixFetch) |
-| **Fetch by Reaction** | Same, and can keep only the photos reacted with ❌ 📵 😥 😢 … | `fetchimagesbyicon` |
 | **Fetch by Date** | Saves every photo sent in one chat between two dates and times (to the second), one folder per day, with a CSV log; photos saved before are skipped. | `wpimagefetch` (WhatsApp Image Fetcher) |
-| **Reaction List** | Lists the codes reacted with ❌, 📵 or 😥 (pick one or all three), with the phone number from the order message. | new |
+| **Reaction List** | Lists the codes reacted with ❌, 📵, 😥 (pick one or all three) or the emojis you type under *Custom*, with the phone number from the order message; *List + photos* also saves their reacted photos. | new (replaces Fetch by Reaction, `fetchimagesbyicon`) |
 | **Model Detect** | Finds each code's photos in WhatsApp and writes the phone model next to the code. | `mobilemodeldetect` |
 | **Rename by Match** | Renames the photos in a day folder by matching them with the photos posted in WhatsApp. | `photorenamebymatch` (PhotoMatch Renamer) |
 | **Pathao Auto-fill** | Reads order messages in WhatsApp and fills Pathao's New Delivery form. | `dataentry` |
@@ -34,8 +33,8 @@ window, and every tool works in it (Pathao Auto-fill uses it for Pathao too). Sc
 once and all tools are logged in, also after a restart. The window stays open when Boostimise closes;
 if you close it, the next tool that needs it opens it again, still logged in. WhatsApp Web works in
 only one tab, so two tools can't scroll it at the same moment: the second one says *Waiting for … to
-finish with WhatsApp* and goes on by itself. (Fetch by Code / Reaction read WhatsApp without
-scrolling, so they never wait; nor does Reaction List. Fetch by Date clicks through the photos, so it waits.)
+finish with WhatsApp* and goes on by itself. (Fetch by Code reads WhatsApp without
+scrolling, so it never waits; nor does Reaction List. Fetch by Date clicks through the photos, so it waits.)
 
 Shortcuts: **Ctrl+1 … Ctrl+9** switch tools (Ctrl+1 is the Photo Enhancer, Ctrl+2 Fetch by Code …). The « button at the bottom of the sidebar makes it narrow.
 
@@ -99,7 +98,6 @@ started with `run.bat`.
 | Photo Enhancer | `<data>\photo_enhancer` (where downloads are saved, pasted images while they are in the list) |
 | WhatsApp + Pathao login (all tools) | `<data>\browser` (the shared Edge window's profile) |
 | Fetch by Code | `<data>\fetch_by_code` |
-| Fetch by Reaction | `<data>\fetch_by_reaction` |
 | Fetch by Date | `<data>\fetch_by_date` (`downloads_manifest` = photos already saved; the photos go to *Save to*, `Downloads\WhatsApp Images` at first) |
 | Reaction List | `<data>\reaction_list` |
 | Model Detect | `<data>\model_detect` (result files and photos are saved next to your code list) |
@@ -181,11 +179,15 @@ so copies released before this check existed are locked out too: they show their
   with several photos, *All as JPG / PNG (.zip)* saves them in one ZIP. If the enhancement server is
   offline the page says so and Enhance waits.
 
-- **Reaction List**: pick ❌, 📵, 😥 or all three, then *Fetch list*. With the code box empty it lists every
+- **Reaction List**: pick ❌, 📵, 😥 or all three, or type your own emojis in the *Custom* box (👍 ❤️ 🔥 …, with or
+  without spaces; 👍🏻 counts as 👍), then *Fetch list*. With the code box empty it lists every
   code that got the reaction in the chats read (*Search in*, *Look back*); with codes pasted, only those.
   A reaction counts on the message with the code, on its album, or on a photo the same person sent right
   after it; 😥 also counts 😢 (WhatsApp's built-in sad reaction). Messages naming more than 3 codes
   (lists, summaries) are left out. *Copy list* gives `1. 2-558 Realme C85 ❌ 01734484040`, one code per line.
+  *Fetch: List + photos* also saves each listed code's reacted photos in *Save photos to* (`Pictures\Reaction List`
+  at first) as `2-558 Realme C85.jpg`, like Fetch by Code: all photos of a code whose message has the reaction,
+  otherwise only the photos with it. Codes already saved there are skipped; double-click a row to open its photos.
 - **Fetch by Date**: pick the chat (or type its exact name), set *From* / *To* (or press *Today*, *Last 7 days* …)
   and press *Start*. It opens the chat's newest photo in WhatsApp's image viewer and steps back photo by photo,
   passing the newer ones without downloading them and saving the ones in the range, until it reaches one older
@@ -198,7 +200,9 @@ so copies released before this check existed are locked out too: they show their
   relies on.
 - **Pathao Auto-fill**: click *Open / Connect browser*, log in to WhatsApp and Pathao in the shared Edge
   window once. F5 Start, F6 Pause, F8 Saved → Next, F9 Skip. *Keep this window on top* applies while this
-  tool is the one shown.
+  tool is the one shown. *Check Pathao* looks the loaded codes up in Pathao's orders (the code is an order's
+  Merchant Order ID; only orders since the code prefix last started again from 1 count), marks the ones found
+  as saved and writes their phone next to them in the list.
 - **Model Detect**: *Identify phones with* can read written model names for free (chat text and text in
   the photos), or ask a local AI (Ollama, `ollama pull qwen2.5vl:7b`) or the Claude API (paid, needs a key).
 - **PhotoMatch**: *AI match* runs on the Intel NPU / GPU / CPU through OpenVINO; *Visual match* needs nothing extra.

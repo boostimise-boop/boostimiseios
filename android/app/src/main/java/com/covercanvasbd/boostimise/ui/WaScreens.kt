@@ -29,10 +29,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.covercanvasbd.boostimise.Tools
-import com.covercanvasbd.boostimise.tools.fetch.DEFAULT_REACTIONS
+import com.covercanvasbd.boostimise.tools.fetch.ChatFilter
 import com.covercanvasbd.boostimise.tools.fetch.FetchTool
 import com.covercanvasbd.boostimise.tools.fetch.NEIGHBOUR_MODES
 import com.covercanvasbd.boostimise.tools.reactions.CHOICES
+import com.covercanvasbd.boostimise.tools.reactions.CUSTOM
 import com.covercanvasbd.boostimise.wa.WaEngine
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -96,16 +97,11 @@ fun FetchScreen(t: FetchTool) {
         Section("2  Settings") {
             ChatFilterPicker(t.chat) { t.chat = it }
             CheckRow("A chat for each list (6-, 5a- …)", t.perList) { t.perList = it; if (it) t.autoFillListChats() }
-            if (t.perList) ListChats(t)
+            if (t.perList) ListChats(t.lists(), t.listChats, t.chat) { t.autoFillListChats() }
             Select("Take", NEIGHBOUR_MODES, t.neighbors) { t.neighbors = it }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Column(Modifier.weight(1f)) { NumberField("Album gap", t.gapMinutes, 1..240, "min") { t.gapMinutes = it } }
                 Column(Modifier.weight(1f)) { NumberField("Look back", t.lookbackDays, 1..365, "days") { t.lookbackDays = it } }
-            }
-            if (t.reactions) {
-                CheckRow("Only photos reacted with", t.reactionsOnly) { t.reactionsOnly = it }
-                if (t.reactionsOnly) androidx.compose.material3.OutlinedTextField(t.reactionText, { t.reactionText = it },
-                    label = { Text("Reactions") }, placeholder = { Text(DEFAULT_REACTIONS) }, singleLine = true, modifier = Modifier.fillMaxWidth())
             }
             CheckRow("Add the date to names (26/9 → 26-9)", t.includeDate) { t.includeDate = it }
             CheckRow("Skip codes that are already saved", t.skipExisting) { t.skipExisting = it }
@@ -134,16 +130,16 @@ fun FetchScreen(t: FetchTool) {
 
 /** One chat picker per list in the code list, filled in from chat names ("Customise Phone Case (6-)"). */
 @Composable
-private fun ListChats(t: FetchTool) {
-    val lists = t.lists()
-    LaunchedEffect(WaEngine.chats, lists) { t.autoFillListChats() }
+private fun ListChats(lists: List<Pair<String, Int>>, chats: MutableMap<String, ChatFilter>, fallback: ChatFilter,
+                      autoFill: () -> Unit) {
+    LaunchedEffect(WaEngine.chats, lists) { autoFill() }
     if (lists.isEmpty()) {
         Hint("Paste the code list above: each list (6-, 5a- …) then gets its chat here.")
         return
     }
     for ((list, count) in lists) {
-        ListChatPicker("$list list · $count code" + if (count > 1) "s" else "", t.listChats[list],
-            "No \"($list)\" chat: searched in ${t.chat.label}") { t.listChats[list] = it }
+        ListChatPicker("$list list · $count code" + if (count > 1) "s" else "", chats[list],
+            "No \"($list)\" chat: searched in ${fallback.label}") { chats[list] = it }
     }
     Hint("Filled in from chat names with \"(6-)\", \"(5a-)\" …. Tap one to choose another chat. " +
         "Each list's codes are searched only in its chat.")
@@ -162,17 +158,35 @@ fun ReactionListScreen() {
                     if (c == t.choice) Button({ }) { Text(c.label) } else OutlinedButton({ t.choice = c }) { Text(c.label) }
                 }
             }
-            Hint("😥 also counts 😢 (WhatsApp's built-in sad reaction).")
+            androidx.compose.material3.OutlinedTextField(t.customText, { t.customText = it; t.choice = CHOICES.first { c -> c.key == CUSTOM } },
+                label = { Text("Custom reactions") }, placeholder = { Text("Type your emojis, e.g. 👍 ❤️ 🔥") },
+                singleLine = true, enabled = !t.running, modifier = Modifier.fillMaxWidth())
+            Hint("😥 also counts 😢 (WhatsApp's built-in sad reaction). Skin tones count as one reaction (👍🏻 = 👍).")
         }
         Section("Codes (optional)", "Leave empty to list every code that got the reaction in the chats read.") {
             CodeListBox(t.codeText, { t.codeText = it })
         }
         Section("Settings") {
             ChatFilterPicker(t.chat) { t.chat = it }
+            CheckRow("A chat for each list (6-, 5a- …)", t.perList, enabled = !t.running) { t.perList = it; if (it) t.autoFillListChats() }
+            if (t.perList) ListChats(remember(t.codeText) { t.lists() }, t.listChats, t.chat) { t.autoFillListChats() }
             NumberField("Look back", t.lookbackDays, 1..365, "days") { t.lookbackDays = it }
+            Text("Fetch", fontWeight = FontWeight.Medium)
+            Chips {
+                for ((photos, label) in listOf(false to "List only", true to "List + photos")) {
+                    if (photos == t.withPhotos) Button({ }) { Text(label) }
+                    else OutlinedButton({ t.withPhotos = photos }, enabled = !t.running) { Text(label) }
+                }
+            }
+            if (t.withPhotos) {
+                androidx.compose.material3.OutlinedTextField(t.folder, { t.folder = it }, label = { Text("Save in Pictures/Boostimise/") },
+                    singleLine = true, enabled = !t.running, modifier = Modifier.fillMaxWidth())
+                Hint("Saves each listed code's reacted photos as \"2-558 Realme C85.jpg\". A code whose message has the " +
+                    "reaction gets all its photos; otherwise only the photos with the reaction.")
+            }
         }
         Section {
-            RunBar(t.running, t.progress, t.activity, t.summary, startLabel = "Fetch list", onStart = { t.start() }, onStop = { t.stop() })
+            RunBar(t.running, t.progress, t.activity, t.summary, startLabel = if (t.withPhotos) "Fetch list + photos" else "Fetch list", onStart = { t.start() }, onStop = { t.stop() })
         }
         if (t.results.isNotEmpty()) Section("${t.results.size} codes") {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -185,11 +199,13 @@ fun ReactionListScreen() {
             }
             t.results.forEachIndexed { n, f ->
                 Column(Modifier.fillMaxWidth().background(if (n % 2 == 0) Brand.BG else Brand.SURFACE).padding(6.dp)) {
-                    Text("${n + 1}. ${f.code} ${f.name} ${f.react(t.choice.emojis)}", fontWeight = FontWeight.Medium)
+                    Text("${n + 1}. ${f.code} ${f.name} ${f.react(t.shown)}", fontWeight = FontWeight.Medium)
                     if (f.phones.isNotEmpty()) Text(f.phones.joinToString(", "), fontSize = 13.sp)
                     Text(f.chats.joinToString(", "), color = Brand.MUTED, fontSize = 12.sp)
+                    if (f.photos.isNotEmpty()) Text("Photos: ${f.photos}", color = Brand.TEXT_2, fontSize = 12.sp)
                 }
             }
+            if (t.results.any { it.photos.isNotEmpty() }) Hint("Photos saved in the gallery: Pictures/Boostimise/${t.folder}")
         }
         LogBox(t.log)
     }

@@ -60,14 +60,37 @@ fun listInName(list: String, name: String): Boolean =
     list.length > 1 && Regex("(?<![0-9A-Za-z])" + Regex.escape(list.dropLast(1)) + "\\s*-(?!\\s*\\d)", RegexOption.IGNORE_CASE)
         .containsMatchIn(name)
 
-/** 😢 is WhatsApp's built-in "sad" reaction, so it is listed next to 😥. */
-const val DEFAULT_REACTIONS = "❌ 📵 😥 😢"
+/** The chat of each list, as saved in a tool's settings ("6-" -> chat). */
+fun listChatsFromJson(json: String?): Map<String, ChatFilter> {
+    val saved = runCatching { JSONObject(json ?: "{}") }.getOrElse { JSONObject() }
+    return saved.keys().asSequence().mapNotNull { k ->
+        saved.optJSONObject(k)?.let { k to ChatFilter(it.optString("id"), it.optString("title")) }
+    }.toMap()
+}
+
+fun listChatsToJson(chats: Map<String, ChatFilter>): String {
+    val out = JSONObject()
+    for ((k, f) in chats) out.put(k, jsonOf("id" to f.id, "title" to f.title))
+    return out.toString()
+}
+
+/** Gives each list without a (still existing) chat the chat named for it ("… (6-)"), the most recent one if several. */
+fun autoFillListChats(lists: Collection<String>, into: MutableMap<String, ChatFilter>) {
+    val chats = WaEngine.chats
+    if (chats.isEmpty()) return
+    for (list in lists) {
+        val now = into[list]
+        if (now != null && chats.any { it.id == now.id }) continue
+        val match = chats.filter { listInName(list, it.title) }.maxByOrNull { it.t } ?: continue
+        into[list] = ChatFilter(match.id, match.title)
+    }
+}
 
 /**
- * Fetch by Code and Fetch by Reaction (tools/whatsapp_fetch): finds the photos of each code in the
+ * Fetch by Code (tools/whatsapp_fetch): finds the photos of each code in the
  * WhatsApp chats and saves them as "2-558 Realme C85.jpg" in Pictures/Boostimise/<tool>.
  */
-class FetchTool(val key: String, val title: String, val reactions: Boolean, private val scope: CoroutineScope) {
+class FetchTool(val key: String, val title: String, private val scope: CoroutineScope) {
     class Row(val item: CodeItem) {
         var kind by mutableStateOf("")       // "" | working | ok | none | error | skipped
         var text by mutableStateOf("")
@@ -95,29 +118,21 @@ class FetchTool(val key: String, val title: String, val reactions: Boolean, priv
     var neighbors by mutableStateOf(prefs.getString("neighbors", "after")!!)
     var gapMinutes by mutableStateOf(prefs.getInt("gap_minutes", 5))
     var lookbackDays by mutableStateOf(prefs.getInt("lookback_days", 10))
-    var reactionsOnly by mutableStateOf(reactions && prefs.getBoolean("reactions_only", true))
-    var reactionText by mutableStateOf(prefs.getString("reactions", DEFAULT_REACTIONS)!!)
     var includeDate by mutableStateOf(prefs.getBoolean("include_date", false))
     var skipExisting by mutableStateOf(prefs.getBoolean("skip_existing", true))
     /** Each list in its own chat: the 6- codes in "Customise Phone Case (6-)", the 5a- codes in … */
     var perList by mutableStateOf(prefs.getBoolean("per_list", false))
     /** The chat of each list ("6-" -> chat); a list without one is searched in [chat]. */
-    val listChats = mutableStateMapOf<String, ChatFilter>().apply {
-        val saved = runCatching { JSONObject(prefs.getString("list_chats", "{}")!!) }.getOrElse { JSONObject() }
-        for (k in saved.keys()) saved.optJSONObject(k)?.let { put(k, ChatFilter(it.optString("id"), it.optString("title"))) }
-    }
+    val listChats = mutableStateMapOf<String, ChatFilter>().apply { putAll(listChatsFromJson(prefs.getString("list_chats", "{}"))) }
 
     val relPath get() = Storage.picturesPath(folder.ifBlank { title })
 
     fun saveSettings() {
-        val lc = JSONObject()
-        for ((k, f) in listChats) lc.put(k, jsonOf("id" to f.id, "title" to f.title))
         prefs.edit().putString("folder", folder).putString("chat_id", chat.id).putString("chat_title", chat.title)
             .putBoolean("groups_only", chat.groupsOnly).putString("neighbors", neighbors).putInt("gap_minutes", gapMinutes)
-            .putInt("lookback_days", lookbackDays).putBoolean("reactions_only", reactionsOnly)
-            .putString("reactions", reactionText).putBoolean("include_date", includeDate)
+            .putInt("lookback_days", lookbackDays).putBoolean("include_date", includeDate)
             .putBoolean("skip_existing", skipExisting).putBoolean("per_list", perList)
-            .putString("list_chats", lc.toString()).apply()
+            .putString("list_chats", listChatsToJson(listChats)).apply()
     }
 
     /** The lists in the code list, in order, with how many codes each has: [("6-", 7), ("5a-", 22), …]. */
@@ -128,16 +143,7 @@ class FetchTool(val key: String, val title: String, val reactions: Boolean, priv
     fun chatFor(list: String): ChatFilter = if (perList) listChats[list] ?: chat else chat
 
     /** Gives each list without a chat the chat named for it ("… (6-)"), the most recent one if several. */
-    fun autoFillListChats() {
-        val chats = WaEngine.chats
-        if (chats.isEmpty()) return
-        for ((list, _) in lists()) {
-            val now = listChats[list]
-            if (now != null && chats.any { it.id == now.id }) continue
-            val match = chats.filter { listInName(list, it.title) }.maxByOrNull { it.t } ?: continue
-            listChats[list] = ChatFilter(match.id, match.title)
-        }
-    }
+    fun autoFillListChats() = autoFillListChats(lists().map { it.first }, listChats)
 
     fun parse() {
         val items = Codes.parseCodeList(codeText)
@@ -205,14 +211,12 @@ class FetchTool(val key: String, val title: String, val reactions: Boolean, priv
             } else todo += r to base
         }
         if (todo.isNotEmpty()) {
-            val wanted = if (reactions && reactionsOnly) reactionText.trim().ifEmpty { DEFAULT_REACTIONS } else ""
-            val scan = scan(todo, wanted)
+            val scan = scan(todo)
             for ((i, pair) in todo.withIndex()) {
                 val (row, base) = pair
                 val images = scan.found[i.toString()].orEmpty().values.sortedBy { it.optLong("t") }
                 val (kind, n) = try {
-                    downloadAndSave(row, base, images, scan.mentions[i.toString()] ?: 0,
-                        scan.unreacted[i.toString()] ?: 0, scan.since, wanted)
+                    downloadAndSave(row, base, images, scan.mentions[i.toString()] ?: 0, scan.since)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -236,12 +240,12 @@ class FetchTool(val key: String, val title: String, val reactions: Boolean, priv
     }
 
     private class Scan(val found: Map<String, Map<String, JSONObject>>, val mentions: Map<String, Int>,
-                       val unreacted: Map<String, Int>, val since: java.time.LocalDateTime, val chats: Int)
+                       val since: java.time.LocalDateTime, val chats: Int)
 
-    private suspend fun scan(todo: List<Pair<Row, String>>, wanted: String): Scan {
+    private suspend fun scan(todo: List<Pair<Row, String>>): Scan {
         val since = Codes.scanSince(todo.map { it.first.item }, lookbackDays)
         val sinceTs = since.atZone(ZoneId.systemDefault()).toEpochSecond()
-        val api = if (reactions) "window.__waf_reactions" else "window.__waf_basic"
+        val api = "window.__waf_basic"
         val dd = DateTimeFormatter.ofPattern("dd/MM/yyyy")
         // One pass per chat filter: all codes in [chat], or with [perList] each list's codes in its own chat.
         val passes = todo.indices.groupBy { chatFor(listOfCode(todo[it].first.item.code)) }.map { (filter, keys) ->
@@ -252,12 +256,10 @@ class FetchTool(val key: String, val title: String, val reactions: Boolean, priv
         val total = chatCount + todo.size
         progress = 0f
         log.add("Reading $chatCount chat(s) active since ${since.format(dd)} for ${todo.size} code(s)…")
-        if (wanted.isNotEmpty()) log.add("Only photos reacted with $wanted.")
         todo.forEach { (r, _) -> r.kind = "working"; r.text = "Reading chats…" }
 
         val found = mutableMapOf<String, MutableMap<String, JSONObject>>()
         val mentions = mutableMapOf<String, Int>()
-        val unreacted = mutableMapOf<String, Int>()
         var short = 0
         // (chat, the options with that pass's codes) for every chat to read
         val reads = passes.flatMap { (filter, keys, targets) ->
@@ -269,7 +271,7 @@ class FetchTool(val key: String, val title: String, val reactions: Boolean, priv
             val codes = JSONArray()
             for (i in keys) codes.put(jsonOf("key" to i.toString(), "pattern" to Codes.codePattern(todo[i].first.item.code)))
             val opts = jsonOf("codes" to codes, "since" to sinceTs, "neighbors" to neighbors, "gapMinutes" to gapMinutes,
-                "maxNeighbors" to 30, "maxLoads" to 300, "reactions" to wanted)
+                "maxNeighbors" to 30, "maxLoads" to 300)
             targets.map { it to opts }
         }
         for ((n, read) in reads.withIndex()) {
@@ -297,21 +299,19 @@ class FetchTool(val key: String, val title: String, val reactions: Boolean, priv
                 row.text = "Reading chats… ${bucket.size} photo(s) found"
             }
             res.optJSONObject("mentions")?.let { m -> m.keys().forEach { mentions[it] = (mentions[it] ?: 0) + m.optInt(it) } }
-            res.optJSONObject("unreacted")?.let { m -> m.keys().forEach { unreacted[it] = (unreacted[it] ?: 0) + m.optInt(it) } }
             if (hitKeys.isNotEmpty()) log.add("$t: photos for ${hitKeys.joinToString(", ") { todo[it.toInt()].first.item.code }}")
             if (res.optInt("loaded") > 0 && !res.optBoolean("reached") && res.optBoolean("exhausted")) short++
             progress = (n + 1).toFloat() / total
         }
         if (short > 0) log.add("Note: $short chat(s) have no older messages on WhatsApp Web (before ${since.format(dd)}).")
-        return Scan(found, mentions, unreacted, since, chatCount)
+        return Scan(found, mentions, since, chatCount)
     }
 
-    private suspend fun downloadAndSave(row: Row, base: String, images: List<JSONObject>, mentions: Int, unreacted: Int,
-                                        since: java.time.LocalDateTime, reactions: String): Pair<String, Int> {
+    private suspend fun downloadAndSave(row: Row, base: String, images: List<JSONObject>, mentions: Int,
+                                        since: java.time.LocalDateTime): Pair<String, Int> {
         val code = row.item.code
         if (images.isEmpty()) {
             val detail = when {
-                unreacted > 0 -> "$unreacted photo(s) found, none reacted with $reactions"
                 mentions > 0 -> "code is in $mentions message(s), none with a photo"
                 else -> "not in any chat since ${since.format(DateTimeFormatter.ofPattern("dd/MM"))}"
             }

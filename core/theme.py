@@ -14,7 +14,7 @@ from .paths import ASSETS
 # packaging/build.py reads these four lines (name, publisher, version of the exe and the setup).
 APP_NAME = "Boostimise"
 APP_PUBLISHER = "Cover Canvas BD"
-APP_VERSION = "4.3.0"
+APP_VERSION = "4.4.1"
 APP_ID = "CoverCanvasBD.Boostimise"  # Windows taskbar grouping; the setup's shortcuts use the same id
 APP_TAGLINE = "WA Photos • Enhance • Rename • Match"
 APP_NAME_BLUE = "imise"  # the end of the name, which the logo's wordmark writes in blue

@@ -47,14 +47,21 @@ object Jobs {
         update()
     }
 
+    private var serviceOn = false
+
     private fun update() {
         val intent = Intent(app, JobService::class.java)
         if (busy.isEmpty()) {
-            app.stopService(intent)
+            // Not stopService(): a job that ends at once would stop the service before it called
+            // startForeground(), and Android kills the app for that. The service stops itself instead.
+            if (!serviceOn) return
+            serviceOn = false
+            intent.putExtra("stop", true)
         } else {
+            serviceOn = true
             intent.putExtra("text", busy.values.first())
-            runCatching { app.startForegroundService(intent) }
         }
+        runCatching { app.startForegroundService(intent) }
     }
 }
 
@@ -78,6 +85,11 @@ class JobService : Service() {
             .build()
         ServiceCompat.startForeground(this, 1, n,
             if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0)
+        if (intent?.getBooleanExtra("stop", false) == true) {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            stopSelf(startId)   // a tool that started again in the meantime keeps it running
+            return START_NOT_STICKY
+        }
         if (wake == null) {
             wake = getSystemService(PowerManager::class.java)
                 .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Boostimise:tools").apply { acquire(3 * 60 * 60 * 1000L) }

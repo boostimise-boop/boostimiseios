@@ -130,7 +130,7 @@ fun FetchScreen(t: FetchTool) {
 
 /** One chat picker per list in the code list, filled in from chat names ("Customise Phone Case (6-)"). */
 @Composable
-private fun ListChats(lists: List<Pair<String, Int>>, chats: MutableMap<String, ChatFilter>, fallback: ChatFilter,
+fun ListChats(lists: List<Pair<String, Int>>, chats: MutableMap<String, ChatFilter>, fallback: ChatFilter,
                       autoFill: () -> Unit) {
     LaunchedEffect(WaEngine.chats, lists) { autoFill() }
     if (lists.isEmpty()) {

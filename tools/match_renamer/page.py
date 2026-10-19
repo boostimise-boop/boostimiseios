@@ -12,8 +12,8 @@ from datetime import datetime
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QTextBlockFormat, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
-    QBoxLayout, QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QMessageBox, QProgressBar, QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSpinBox,
+    QBoxLayout, QCheckBox, QComboBox, QFileDialog, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
+    QLineEdit, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSpinBox,
     QTextEdit, QVBoxLayout, QWidget,
 )
 
@@ -85,7 +85,6 @@ class RenamerPage(QWidget):
         self.threshold_spin.setValue(int(s.get("threshold", 10)))
         self.max_spin.setValue(int(s.get("max_messages", 3000)))
         self.neighbors_check.setChecked(s.get("neighbors", True))
-        (self.multi_folder if s.get("multi", "folder") == "folder" else self.multi_number).setChecked(True)
         self.note_check.setChecked(s.get("add_note", False))
         self.dry_check.setChecked(s.get("dry_run", False))
         self.txt_edit.textChanged.connect(lambda _: self._show_codes())
@@ -166,16 +165,10 @@ class RenamerPage(QWidget):
         a.addWidget(self.neighbors_check)
         b = QVBoxLayout(self.opt_b)
         b.setContentsMargins(0, 0, 0, 0)
-        b.addWidget(QLabel("If a code has 2 or more photos:"))
-        self.multi_group = QButtonGroup(self)
-        self.multi_folder = QRadioButton('put them in a folder "6-834 Infinix hot 30"')
-        self.multi_number = QRadioButton('number them "… (1).jpg", "… (2).jpg"')
-        for rb in (self.multi_folder, self.multi_number):
-            self.multi_group.addButton(rb)
-            row = QHBoxLayout()
-            row.addSpacing(18)
-            row.addWidget(rb)
-            b.addLayout(row)
+        multi = QLabel('One photo becomes "2-226 Realme P3 Ultra.jpg"; 2 or more go into a folder '
+                       '"2-221 Oppo a6 pro 5g" as img1.jpg, img2.jpg …', objectName="hint")
+        multi.setWordWrap(True)
+        b.addWidget(multi)
         self.note_check = QCheckBox("Add the (note) from the WhatsApp caption")
         b.addWidget(self.note_check)
         self.dry_check = QCheckBox("Preview only (change nothing)")
@@ -405,7 +398,6 @@ class RenamerPage(QWidget):
             "threshold": max(0, self.threshold_spin.value()),
             "max_messages": max(100, self.max_spin.value()),
             "neighbors": self.neighbors_check.isChecked(),
-            "multi": "folder" if self.multi_folder.isChecked() else "number",
             "add_note": self.note_check.isChecked(),
             "dry_run": self.dry_check.isChecked(),
             "lists": [{"group": g, "on": self.list_vars[g]["on"], "chat": self.list_vars[g]["chat"].strip()}
@@ -475,7 +467,6 @@ class RenamerPage(QWidget):
         self.threshold_spin.setValue(10)
         self.max_spin.setValue(3000)
         self.neighbors_check.setChecked(True)
-        self.multi_folder.setChecked(True)
         self.note_check.setChecked(False)
         self.dry_check.setChecked(False)
         self._show_codes()

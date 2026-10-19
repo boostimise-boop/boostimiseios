@@ -159,6 +159,22 @@ def caption_note(captions, label):
     return f" ({'; '.join(notes)})" if notes else ""
 
 
+def _is_name(name, base):
+    """"6-852 Nubia a56", with only (bracketed) text after it: a note or "(2)"."""
+    name, base = name.lower(), base.lower()
+    return name.startswith(base) and re.fullmatch(r"(\s*\([^()]*\))*", name[len(base):]) is not None
+
+
+def named_for(path, base):
+    """True if the photo already has the name its code gives it ("6-852 Nubia a56.jpg", "… (2).jpg",
+    or img1.jpg in the folder "6-852 Nubia a56"): it is left as it is. Any other name, also one
+    starting with a code ("6-852 Nubia a56 1.jpg", "6-840 …"), is renamed."""
+    path = Path(path)
+    if re.fullmatch(r"img\d+", path.stem, re.IGNORECASE) and _is_name(path.parent.name, base):
+        return True
+    return _is_name(path.stem, base)
+
+
 # --------------------------------------------------------------------------- photo matching
 
 @dataclass
@@ -212,7 +228,7 @@ def difference(a, b):
 class LocalPhoto:
     path: Path
     sig: Signature
-    done_code: str = ""       # already renamed to this code before this run
+    done_code: str = ""       # its name already starts with this code (renamed before this run)
     current: Path = None
     used_for: list = field(default_factory=list)
 
@@ -1061,6 +1077,17 @@ class Renamer:
         with open(self.log_path, "a", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow([action, str(src), str(dst)])
 
+    def next_numbered(self, folder, prefix, ext):
+        """"img1.jpg", or the next number not used yet in the folder ("img4.jpg" after img1-3)."""
+        taken = {p.stem.lower() for p in folder.iterdir()} if folder.exists() else set()
+        k = 1
+        while (f"{prefix}{k}".lower() in taken
+               or any(r.startswith(str(folder / f"{prefix}{k}.").lower()) for r in self.reserved)):
+            k += 1
+        cand = folder / f"{prefix}{k}{ext}"
+        self.reserved.add(str(cand).lower())
+        return cand
+
     def mkdir(self, folder):
         if not self.dry and not folder.exists():
             folder.mkdir()
@@ -1193,9 +1220,8 @@ class Worker(threading.Thread):
                 continue
             photos = self.scan_folder(root, folder, opts["recursive"])
             all_photos += photos
-            if not any(not ph.done_code for ph in photos):
-                self.log(f"All photos in folder {folder.name} are already renamed, "
-                         "so this list is skipped.", "ok")
+            if not photos:
+                self.log(f"No photos in folder {folder.name}, so this list is skipped.", "warn")
                 continue
             self.status("Opening WhatsApp…")
             self.progress(0, 0)
@@ -1231,8 +1257,9 @@ class Worker(threading.Thread):
             entries.append((p, norm_code(m.group(1), m.group(2)) if m else ""))
         entries.sort(key=lambda e: str(e[0]).lower())
         done = sum(1 for _, c in entries if c)
-        self.log(f"Folder {folder.name}: {len(entries) - done} photos to rename" +
-                 (f" (+ {done} already renamed, they are not changed)" if done else ""))
+        self.log(f"Folder {folder.name}: {len(entries)} photos" +
+                 (f" ({done} already named with a code: they are renamed again if their name is not "
+                  "the one in the list)" if done else ""))
         photos = []
         for i, (p, code) in enumerate(entries, 1):
             self.check_stop()
@@ -1279,14 +1306,14 @@ class Worker(threading.Thread):
             chosen, closest = [], None
             for key, wsig in wa:
                 # Among matching photos prefer: already named with this code, then a photo
-                # not renamed yet, and only then one used for another code (it gets copied)
+                # not used in this run, and only then one used for another code (it gets copied)
                 best, best_rank = None, None
                 for ph in photos:
                     d = difference(wsig, ph.sig)
                     closest = d if closest is None else min(closest, d)
                     if d > limit:
                         continue
-                    kind = 0 if ph.done_code == p.code else 1 if not (ph.done_code or ph.used_for) else 2
+                    kind = 0 if ph.done_code == p.code else 1 if not ph.used_for else 2
                     if best_rank is None or (kind, d) < best_rank:
                         best, best_rank = ph, (kind, d)
                 if best is not None and all(best is not c for c, _, _ in chosen):
@@ -1301,11 +1328,14 @@ class Worker(threading.Thread):
                 stats["no_match"] += 1
                 continue
 
-            already = [c for c in chosen if c[0].done_code == p.code]
-            chosen = [c for c in chosen if c[0].done_code != p.code]
+            # photos that already have this code's name stay as they are; any other name is renamed
+            plain = safe_filename(p.label)
+            total = len(chosen)
+            already = [c for c in chosen if not c[0].used_for and named_for(c[0].current, plain)]
+            chosen = [c for c in chosen if all(c is not a for a in already)]
             for ph, _, _ in already:
                 ph.used_for.append(p.label)
-                self.log(f"✓ {p.label}: already renamed ({rel(ph.path)})", "dim")
+                self.log(f"✓ {p.label}: already named ({rel(ph.current)})", "dim")
             if not chosen:
                 stats["already"] += 1
                 continue
@@ -1313,7 +1343,7 @@ class Worker(threading.Thread):
             note = caption_note(hit.captions, p.label) if opts["add_note"] else ""
             base = safe_filename(p.label + note)
             try:
-                self.apply_names(p, base, chosen, renamer, scan.previews, opts["multi"], rel)
+                self.apply_names(p, base, chosen, renamer, scan.previews, rel, total)
                 stats["codes"] += 1
                 stats["photos"] += len(chosen)
             except OSError as e:
@@ -1321,23 +1351,29 @@ class Worker(threading.Thread):
                 stats["errors"] += 1
         return report
 
-    def apply_names(self, product, base, chosen, renamer, previews, multi_mode, rel):
-        if len(chosen) == 1:
+    @staticmethod
+    def home(ph):
+        """Where a photo's new name goes: its folder, or the one above when that is already a
+        code's folder ("6-840 …/img1.jpg", copied for a second code)."""
+        parent = ph.path.parent
+        return parent.parent if ph.done_code and DONE_RE.match(parent.name) else parent
+
+    def apply_names(self, product, base, chosen, renamer, previews, rel, total):
+        """One photo: "2-226 Realme P3 Ultra.jpg". Several (total, with the ones already named):
+        a folder "2-221 Oppo a6 pro 5g" with img1.jpg, img2.jpg …"""
+        if total == 1:
             ph = chosen[0][0]
-            targets = [renamer.free_path(ph.path.parent, base, ph.path.suffix)]
-        elif multi_mode == "folder":
-            folder = chosen[0][0].path.parent / base
-            renamer.mkdir(folder)
-            targets = [renamer.free_path(folder, ph.path.stem, ph.path.suffix) for ph, _, _ in chosen]
+            targets = [renamer.free_path(self.home(ph), base, ph.path.suffix)]
         else:
-            targets = [renamer.free_path(ph.path.parent, f"{base} ({k})", ph.path.suffix)
-                       for k, (ph, _, _) in enumerate(chosen, 1)]
+            folder = self.home(chosen[0][0]) / base
+            renamer.mkdir(folder)
+            targets = [renamer.next_numbered(folder, "img", ph.path.suffix.lower()) for ph, _, _ in chosen]
 
         for (ph, d, key), dst in zip(chosen, targets):
             how = "perfect match" if d == 0 else f"difference {d}"
             if key in previews:
                 how += ", compared with WhatsApp's small preview"
-            if ph.used_for or ph.done_code:
+            if ph.used_for:
                 renamer.copy(ph.current, dst)
                 other = ph.used_for[0] if ph.used_for else rel(ph.path)
                 self.log(f"✓ {product.label}: same photo as {other}, "
@@ -1355,7 +1391,7 @@ class Worker(threading.Thread):
         self.log("Summary", "head")
         self.log(f"  {'Would rename' if dry else 'Renamed'}: {stats['photos']} photo(s) for {stats['codes']} code(s)", "ok")
         if stats["already"]:
-            self.log(f"  Already renamed before: {stats['already']} code(s)")
+            self.log(f"  Already named right: {stats['already']} code(s)")
         self.log(f"  Not found in WhatsApp: {stats['not_found']}")
         self.log(f"  Found in WhatsApp but no matching photo in the folder: {stats['no_match']}")
         if stats["errors"]:

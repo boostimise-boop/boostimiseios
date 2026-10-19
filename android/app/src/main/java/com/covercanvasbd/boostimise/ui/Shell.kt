@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.LocalShipping
@@ -77,6 +78,7 @@ object Nav {
         ENHANCER("Photo Enhancer", Icons.Filled.AutoAwesome, "enhancer"),
         FETCH_CODE("Fetch by Code", Icons.Filled.Image, "fetch_by_code"),
         REACTION_LIST("Reaction List", Icons.Filled.FormatListBulleted, "reaction_list"),
+        RENAME_MATCH("Rename by Match", Icons.Filled.DriveFileRenameOutline, "rename_by_match"),
         MODEL_DETECT("Model Detect", Icons.Filled.Smartphone, "model_detect"),
         PATHAO("Pathao Auto-fill", Icons.Filled.LocalShipping, "pathao"),
         WHATSAPP("WhatsApp", Icons.Filled.Chat, null),
@@ -185,6 +187,7 @@ private fun Shell(activity: Activity) {
                         Nav.Screen.ENHANCER -> EnhancerScreen()
                         Nav.Screen.FETCH_CODE -> FetchScreen(com.covercanvasbd.boostimise.Tools.fetchByCode)
                         Nav.Screen.REACTION_LIST -> ReactionListScreen()
+                        Nav.Screen.RENAME_MATCH -> RenameScreen()
                         Nav.Screen.MODEL_DETECT -> ModelDetectScreen()
                         Nav.Screen.PATHAO -> PathaoScreen(activity)
                         Nav.Screen.DASHBOARD -> DashboardScreen()

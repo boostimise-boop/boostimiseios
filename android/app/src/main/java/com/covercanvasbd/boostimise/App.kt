@@ -9,6 +9,7 @@ import com.covercanvasbd.boostimise.tools.fetch.FetchTool
 import com.covercanvasbd.boostimise.tools.model.ModelDetectTool
 import com.covercanvasbd.boostimise.tools.pathao.PathaoTool
 import com.covercanvasbd.boostimise.tools.reactions.ReactionListTool
+import com.covercanvasbd.boostimise.tools.rename.RenameTool
 import com.covercanvasbd.boostimise.wa.Jobs
 import com.covercanvasbd.boostimise.wa.WaEngine
 import kotlinx.coroutines.CoroutineScope
@@ -21,6 +22,7 @@ object Tools {
     lateinit var enhancer: EnhancerTool
     lateinit var fetchByCode: FetchTool
     lateinit var reactionList: ReactionListTool
+    lateinit var renameByMatch: RenameTool
     lateinit var modelDetect: ModelDetectTool
     lateinit var pathao: PathaoTool
 }
@@ -36,6 +38,7 @@ class App : Application() {
         Tools.enhancer = EnhancerTool(Tools.scope)
         Tools.fetchByCode = FetchTool("fetch_by_code", "Fetch by Code", scope = Tools.scope)
         Tools.reactionList = ReactionListTool(Tools.scope)
+        Tools.renameByMatch = RenameTool(Tools.scope)
         Tools.modelDetect = ModelDetectTool(Tools.scope)
         Tools.pathao = PathaoTool(Tools.scope)
         Account.start()

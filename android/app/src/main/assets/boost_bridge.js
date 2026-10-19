@@ -104,5 +104,19 @@
         warnings,
       };
     },
+
+    // WhatsApp's small preview of a photo (the message body is a base64 JPEG thumbnail). Rename by Match
+    // compares with it when the photo itself can no longer be downloaded.
+    async preview(id) {
+      const M = need();
+      let m = M.Msg.get(id);
+      if (!m && typeof M.Msg.getMessagesById === 'function') {
+        try { const r = await M.Msg.getMessagesById([id]); m = r && r.messages && r.messages[0]; } catch (e) { /* not in local DB */ }
+      }
+      if (!m || !isImage(m)) return { error: 'message not found' };
+      const body = typeof m.body === 'string' ? m.body : '';
+      if (body.length < 200 || !/^[A-Za-z0-9+/=]+$/.test(body.slice(0, 200))) return { error: 'no preview' };
+      return { data: body, mimetype: 'image/jpeg' };
+    },
   };
 })();

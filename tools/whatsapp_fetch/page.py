@@ -4,6 +4,7 @@ Settings are kept in data/fetch_by_code; WhatsApp is the window all tools share 
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
@@ -12,7 +13,7 @@ from PySide6.QtCore import QSettings, QStandardPaths, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QCompleter, QFileDialog, QFormLayout,
-    QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox,
+    QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
     QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QSplitter, QStyle, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -26,6 +27,8 @@ from .worker import WhatsAppWorker
 
 ALL_CHATS = "All chats"
 ALL_GROUPS = "All groups"
+PICKED = "Ticked chats"  # the chats ticked in the list under "Search in"
+PICK_ID = Qt.UserRole + 1  # chat id of a row in that list
 COLS = ["Code", "Name", "Date", "Status", "Saved to"]
 COL_STATUS, COL_PATH = 3, 4
 
@@ -125,10 +128,12 @@ class MainWindow(QMainWindow):
         self.chat_combo = QComboBox()
         self.chat_combo.setEditable(True)
         self.chat_combo.setInsertPolicy(QComboBox.NoInsert)
-        self.chat_combo.addItems([ALL_CHATS, ALL_GROUPS])
+        self.chat_combo.addItems([ALL_CHATS, ALL_GROUPS, PICKED])
         self.chat_combo.completer().setFilterMode(Qt.MatchContains)
         self.chat_combo.completer().setCompletionMode(QCompleter.PopupCompletion)
-        self.chat_combo.setToolTip("Limit the search to one chat/group (type part of its name), or search all chats.")
+        self.chat_combo.setToolTip("Search all chats, only the chats you tick (Ticked chats), or one chat/group "
+                                   "(type part of its name).")
+        self.chat_combo.currentTextChanged.connect(self._show_picker)
         self.chats_btn = QPushButton()
         self.chats_btn.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
         self.chats_btn.setFixedWidth(36)
@@ -137,6 +142,30 @@ class MainWindow(QMainWindow):
         chat_row = QHBoxLayout()
         chat_row.addWidget(self.chat_combo, 1)
         chat_row.addWidget(self.chats_btn)
+
+        # Ticked chats: a searchable list of the chats with a tick box each.
+        self.picker = QWidget()
+        self.pick_filter = QLineEdit(placeholderText="Search chats…")
+        self.pick_filter.setClearButtonEnabled(True)
+        self.pick_filter.textChanged.connect(self._filter_picker)
+        self.pick_list = QListWidget()
+        self.pick_list.setMinimumHeight(150)
+        self.pick_list.itemChanged.connect(self._on_pick_changed)
+        self.pick_count = QLabel(objectName="hint")
+        untick_btn = QPushButton("Untick all")
+        untick_btn.clicked.connect(self._untick_all)
+        self.ticked_only_btn = QPushButton("Show ticked only", checkable=True)
+        self.ticked_only_btn.toggled.connect(self._filter_picker)
+        pick_row = FlowLayout()
+        pick_row.addWidget(self.pick_count)
+        pick_row.addWidget(untick_btn)
+        pick_row.addWidget(self.ticked_only_btn)
+        pick_lay = QVBoxLayout(self.picker)
+        pick_lay.setContentsMargins(0, 0, 0, 0)
+        pick_lay.addWidget(self.pick_filter)
+        pick_lay.addWidget(self.pick_list)
+        pick_lay.addLayout(pick_row)
+        self.picker.setVisible(False)
 
         self.mode_combo = QComboBox()
         for label, key in NEIGHBOUR_MODES:
@@ -153,7 +182,9 @@ class MainWindow(QMainWindow):
         self.lookback_spin.setSuffix(" days")
         self.lookback_spin.setToolTip(
             "How far back to read each chat. It is extended automatically to a week\n"
-            "before the oldest date in your list (e.g. 26/9 → from 19/9).")
+            "before the oldest date in your list (e.g. 26/9 → from 19/9). A group whose codes\n"
+            "have already moved past a code (4a-206, 4a-207… for 4a-205) is read further back\n"
+            "for it, up to 30 days more.")
         self.date_check = QCheckBox("Add the date to names  (26/9 → 26-9)")
         self.date_check.toggled.connect(self._parse_timer.start)
         self.skip_check = QCheckBox("Skip codes that are already saved")
@@ -162,6 +193,7 @@ class MainWindow(QMainWindow):
         form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
         form.addRow("Save to", out_row)
         form.addRow("Search in", chat_row)
+        form.addRow("", self.picker)
         form.addRow("Take", self.mode_combo)
         form.addRow("Album gap", self.gap_spin)
         form.addRow("Look back", self.lookback_spin)
@@ -271,7 +303,13 @@ class MainWindow(QMainWindow):
         s = self.settings
         s.remove("list_text")  # the pasted codes are not kept: every start is fresh (core/shell.py)
         self.out_edit.setText(s.value("output_dir", str(self.default_output_dir())))
+        try:  # shown before WhatsApp is connected; the full chat list replaces it then
+            picked = [c for c in json.loads(s.value("picked_chats", "[]")) if c.get("id")]
+        except (ValueError, TypeError, AttributeError):
+            picked = []
+        self._set_pick_rows(picked, {c["id"] for c in picked})
         self.chat_combo.setCurrentText(s.value("chat", ALL_CHATS))
+        self._show_picker(self.chat_combo.currentText())
         idx = self.mode_combo.findData(s.value("mode", "after"))
         self.mode_combo.setCurrentIndex(max(idx, 0))
         self.gap_spin.setValue(int(s.value("gap_minutes", 5)))
@@ -283,6 +321,7 @@ class MainWindow(QMainWindow):
         s = self.settings
         s.setValue("output_dir", self.out_edit.text().strip())
         s.setValue("chat", self.chat_combo.currentText())
+        s.setValue("picked_chats", json.dumps(self._picked(), ensure_ascii=False))
         s.setValue("mode", self.mode_combo.currentData())
         s.setValue("gap_minutes", self.gap_spin.value())
         s.setValue("lookback_days", self.lookback_spin.value())
@@ -357,14 +396,58 @@ class MainWindow(QMainWindow):
         out.mkdir(parents=True, exist_ok=True)
         os.startfile(out)  # noqa: S606
 
+    # ---- ticked chats ------------------------------------------------------------
+    def _set_pick_rows(self, chats: list[dict], ticked: set[str]):
+        """Fill the list with `chats` ({id, title}), ticked ones first."""
+        self.pick_list.blockSignals(True)
+        self.pick_list.clear()
+        for c in sorted(chats, key=lambda c: c["id"] not in ticked):  # stable: keeps WhatsApp's order
+            it = QListWidgetItem(c.get("title") or c["id"])
+            it.setData(PICK_ID, c["id"])
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Checked if c["id"] in ticked else Qt.Unchecked)
+            self.pick_list.addItem(it)
+        self.pick_list.blockSignals(False)
+        self._on_pick_changed()
+
+    def _picked(self) -> list[dict]:
+        items = (self.pick_list.item(i) for i in range(self.pick_list.count()))
+        return [{"id": it.data(PICK_ID), "title": it.text()} for it in items if it.checkState() == Qt.Checked]
+
+    def _on_pick_changed(self, *_):
+        n = len(self._picked())
+        self.pick_count.setText(f"{n} chat(s) ticked" if n else "Tick the chats to search in")
+        if self.ticked_only_btn.isChecked():
+            self._filter_picker()
+
+    def _filter_picker(self, *_):
+        text = self.pick_filter.text().strip().lower()
+        ticked_only = self.ticked_only_btn.isChecked()
+        for i in range(self.pick_list.count()):
+            it = self.pick_list.item(i)
+            it.setHidden(bool(text and text not in it.text().lower())
+                         or (ticked_only and it.checkState() != Qt.Checked))
+
+    def _untick_all(self):
+        self.pick_list.blockSignals(True)
+        for i in range(self.pick_list.count()):
+            self.pick_list.item(i).setCheckState(Qt.Unchecked)
+        self.pick_list.blockSignals(False)
+        self._on_pick_changed()
+
+    def _show_picker(self, text: str):
+        self.picker.setVisible(text.strip().lower() == PICKED.lower())
+
     def _chat_filter(self) -> dict:
         text = self.chat_combo.currentText().strip()
         if not text or text.lower() == ALL_CHATS.lower():
             return {}
         if text.lower() == ALL_GROUPS.lower():
             return {"groups_only": True}
+        if text.lower() == PICKED.lower():
+            return {"ids": [c["id"] for c in self._picked()]}
         idx = self.chat_combo.findText(text, Qt.MatchFixedString)
-        if idx > 0 and self.chat_combo.itemData(idx):
+        if idx >= 0 and self.chat_combo.itemData(idx):
             return {"id": self.chat_combo.itemData(idx), "title": text}
         return {"title": text}
 
@@ -378,6 +461,11 @@ class MainWindow(QMainWindow):
         out = self.out_edit.text().strip()
         if not out:
             QMessageBox.information(self, "Output folder", "Choose a folder to save the images in.")
+            return
+        chat = self._chat_filter()
+        if "ids" in chat and not chat["ids"]:
+            QMessageBox.information(self, "No chats ticked", "Tick the chats to search in, under 'Search in'"
+                                    + ("." if self.pick_list.count() else " (Open WhatsApp first to list them)."))
             return
         if selected_only:
             rows = sorted({i.row() for i in self.table.selectionModel().selectedRows()})
@@ -396,7 +484,7 @@ class MainWindow(QMainWindow):
             "neighbors": self.mode_combo.currentData(),
             "gap_minutes": self.gap_spin.value(),
             "lookback_days": self.lookback_spin.value(),
-            "chat": self._chat_filter(),
+            "chat": chat,
         }
         self._save_settings()
         self.job_running = True
@@ -452,11 +540,16 @@ class MainWindow(QMainWindow):
         current = self.chat_combo.currentText()
         self.chat_combo.blockSignals(True)
         self.chat_combo.clear()
-        self.chat_combo.addItems([ALL_CHATS, ALL_GROUPS])
+        self.chat_combo.addItems([ALL_CHATS, ALL_GROUPS, PICKED])
         for c in chats:
             self.chat_combo.addItem(c["title"], c["id"])
         self.chat_combo.setCurrentText(current or ALL_CHATS)
         self.chat_combo.blockSignals(False)
+        picked = self._picked()
+        ids = {c["id"] for c in chats}
+        # a ticked chat WhatsApp did not list (left, or not synced yet) stays ticked at the top
+        self._set_pick_rows([c for c in picked if c["id"] not in ids] + chats, {c["id"] for c in picked})
+        self._filter_picker()
         self._log(f"{len(chats)} chats loaded into 'Search in'.")
 
     def _on_progress(self, done: int, total: int):
@@ -507,6 +600,7 @@ class MainWindow(QMainWindow):
         self.stop_btn.setEnabled(self.job_running)
         self.chats_btn.setEnabled(connected and self.wa_state == "ready" and not self.job_running)
         self.list_edit.setReadOnly(self.job_running)
+        self.picker.setEnabled(not self.job_running)
 
     def _log(self, text: str):
         stamp = time.strftime("%H:%M:%S")

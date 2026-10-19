@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from core.codes import code_pattern, list_code  # noqa: F401  (code_pattern is used by the workers)
+from core.codes import code_pattern, list_code, split_code  # noqa: F401  (code_pattern is used by the workers)
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".bmp")
 _DATE_RE = re.compile(r"(?:^|\s)(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\s*$")
@@ -48,6 +48,16 @@ def parse_code_list(text: str) -> list[CodeItem]:
             rest = rest[: m.start()].strip()
         items.append(CodeItem(code=code, name=rest, date=date))
     return items
+
+
+def code_parts(code: str) -> dict:
+    """{'prefix': '4a', 'number': 205} for '4a-205' (the bridge reads a chat further back when its
+    codes start after this one); {} for anything that is not a code."""
+    try:
+        prefix, number = split_code(list_code(code))
+    except ValueError:
+        return {}
+    return {"prefix": prefix, "number": number} if re.fullmatch(r"\d{1,3}[A-Za-z]{0,2}", prefix) else {}
 
 
 def safe_filename(name: str) -> str:

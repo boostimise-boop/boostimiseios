@@ -15,7 +15,7 @@ from PySide6.QtCore import QThread, Signal
 
 from core import whatsapp
 
-from .helpers import CodeItem, code_pattern, existing_output, ext_for, save_images, scan_since
+from .helpers import CodeItem, code_parts, code_pattern, existing_output, ext_for, save_images, scan_since
 
 HERE = Path(__file__).resolve().parent
 # wa_bridge.js: photos of each code (Fetch by Code). wa_bridge_reactions.js: the same, and reads
@@ -35,8 +35,11 @@ class WhatsAppWorker(QThread):
     def __init__(self, bridge: str = "reactions"):
         super().__init__()
         # Both fetch tools can be in the one WhatsApp tab at once, so each bridge gets its own name there.
-        self.api = f"window.__waf_{bridge}"
-        self.bridge_js = BRIDGES[bridge].read_text(encoding="utf-8").replace("window.__waf", self.api)
+        # The name holds the script's hash: the tab outlives Boostimise, and an updated bridge must not be
+        # skipped because the old one is still in it.
+        js = BRIDGES[bridge].read_text(encoding="utf-8")
+        self.api = f"window.__waf_{bridge}_{hashlib.sha1(js.encode('utf-8')).hexdigest()[:8]}"
+        self.bridge_js = js.replace("window.__waf", self.api)
         self.page = None
         self._commands: queue.Queue = queue.Queue()
         self._stop_job = threading.Event()
@@ -255,6 +258,7 @@ class WhatsAppWorker(QThread):
         targets = self._eval(f"o => {self.api}.scanTargets(o)", {
             "since": since_ts,
             "chatId": chat.get("id") or "",
+            "chatIds": chat.get("ids") or [],
             "chatTitle": chat.get("title") or "",
             "groupsOnly": bool(chat.get("groups_only")),
         }) or []
@@ -264,7 +268,8 @@ class WhatsAppWorker(QThread):
         if opt.get("reactions"):
             self.log.emit(f"Only photos reacted with {opt['reactions']}.")
         scan_opts = {
-            "codes": [{"key": str(i), "pattern": code_pattern(item.code)} for i, (_, item, _) in enumerate(todo)],
+            "codes": [{"key": str(i), "pattern": code_pattern(item.code), **code_parts(item.code)}
+                      for i, (_, item, _) in enumerate(todo)],
             "since": since_ts,
             "neighbors": opt.get("neighbors", "none"),
             "gapMinutes": opt.get("gap_minutes", 5),
@@ -290,6 +295,9 @@ class WhatsAppWorker(QThread):
                 continue
             for w in res.get("warnings") or []:
                 self.log.emit(f"{title}: {w}")
+            for back in res.get("readBack") or []:
+                self.log.emit(f"{title}: read back to {datetime.fromtimestamp(back['since']):%d/%m} "
+                              f"for {todo[int(back['key'])][1].code} (posted before the cut-off)")
             hits = res.get("hits") or {}
             for key, imgs in hits.items():
                 bucket = found.setdefault(key, {})

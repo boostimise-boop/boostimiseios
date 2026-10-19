@@ -38,6 +38,16 @@ enum ProductCode {
     static func norm(_ prefix: String, _ number: String) -> String { "\(prefix.lowercased())-\(Int(number) ?? 0)" }
     static func split(_ code: String) -> (String, Int) { (code.beforeLast("-"), Int(code.afterLast("-")) ?? 0) }
 
+    private static let prefixRx = Rx(prefix)
+
+    /// ("4a", 205) for "4a-205" (scanChat reads a chat further back when its codes start after this one);
+    /// nil for anything that is not a code.
+    static func parts(_ code: String) -> (String, Int)? {
+        let c = listCode(code)
+        guard c.contains("-"), let number = Int(c.afterLast("-")), prefixRx.matchEntire(c.beforeLast("-")) != nil else { return nil }
+        return (c.beforeLast("-"), number)
+    }
+
     /// The numbers in group 4 of chatCode: "+2-153-154" -> [153, 154].
     static func moreNumbers(_ prefix: String, _ more: String) -> [String] {
         lock.lock()

@@ -15,18 +15,20 @@ final class ToolLog {
     func clear() { lines.removeAll() }
 }
 
-/// Chat filter: all chats, all groups, one chat (by id) or chats whose name contains a text.
+/// Chat filter: all chats, all groups, the ticked chats (`ids`), one chat (by id) or chats whose name contains a text.
 struct ChatFilter: Hashable {
     var id = ""
     var title = ""
     var groupsOnly = false
+    var ids: [String] = []
 
     func toJs(_ since: Int) -> String {
-        JSONTools.string(jsonOf(("since", since), ("chatId", id), ("chatTitle", title), ("groupsOnly", groupsOnly)))
+        JSONTools.string(jsonOf(("since", since), ("chatId", id), ("chatIds", ids), ("chatTitle", title), ("groupsOnly", groupsOnly)))
     }
 
     var label: String {
         if groupsOnly { return "All groups" }
+        if !ids.isEmpty { return "Ticked chats (\(ids.count))" }
         if !id.isEmpty || !title.isEmpty { return title }
         return "All chats"
     }
@@ -93,6 +95,8 @@ final class FetchTool {
     // settings (remembered)
     var folder: String
     var chat: ChatFilter
+    /// The chats ticked for "Ticked chats", kept while another choice is in use.
+    var tickedChats: [WaChat] = []
     var neighbors: String
     var gapMinutes: Int
     var lookbackDays: Int
@@ -109,7 +113,11 @@ final class FetchTool {
         let p = Storage.prefs(key)
         prefs = p
         folder = p.string("folder", title)
-        chat = ChatFilter(id: p.string("chat_id"), title: p.string("chat_title"), groupsOnly: p.bool("groups_only", false))
+        let ticked = objects(JSONTools.parse(p.string("ticked_chats", "[]")))
+            .filter { !$0.str("id").isEmpty }.map { WaChat(id: $0.str("id"), title: $0.str("title"), t: 0) }
+        tickedChats = ticked
+        chat = ChatFilter(id: p.string("chat_id"), title: p.string("chat_title"), groupsOnly: p.bool("groups_only", false),
+                          ids: p.bool("use_ticked", false) ? ticked.map(\.id) : [])
         neighbors = p.string("neighbors", "after")
         gapMinutes = p.int("gap_minutes", 5)
         lookbackDays = p.int("lookback_days", 10)
@@ -132,6 +140,8 @@ final class FetchTool {
         prefs.set("chat_id", chat.id)
         prefs.set("chat_title", chat.title)
         prefs.set("groups_only", chat.groupsOnly)
+        prefs.set("use_ticked", !chat.ids.isEmpty)
+        prefs.set("ticked_chats", JSONTools.string(tickedChats.map { jsonOf(("id", $0.id), ("title", $0.title)) }))
         prefs.set("neighbors", neighbors)
         prefs.set("gap_minutes", gapMinutes)
         prefs.set("lookback_days", lookbackDays)
@@ -314,7 +324,15 @@ final class FetchTool {
                 log.add("\(names.joined(separator: ", ")) (\(keys.count) code(s)) → \(filter.label)" +
                     (targets.isEmpty ? ": not active since \(dd)" : ""))
             }
-            let codes: [JSON] = keys.map { jsonOf(("key", String($0)), ("pattern", Codes.codePattern(todo[$0].0.item.code))) }
+            let codes: [JSON] = keys.map { i -> JSON in
+                let code = todo[i].0.item.code
+                var c = jsonOf(("key", String(i)), ("pattern", Codes.codePattern(code)))
+                if let parts = ProductCode.parts(code) {
+                    c["prefix"] = parts.0
+                    c["number"] = parts.1
+                }
+                return c
+            }
             let opts = JSONTools.string(jsonOf(("codes", codes), ("since", sinceTs), ("neighbors", neighbors), ("gapMinutes", gapMinutes),
                                                ("maxNeighbors", 30), ("maxLoads", 300)))
             for t in targets { reads.append((t, opts)) }
@@ -337,6 +355,11 @@ final class FetchTool {
                 continue
             }
             for w in res.strs("warnings") { log.add("\(t): \(w)") }
+            for back in res.objs("readBack") {
+                guard let idx = Int(back.str("key")), idx < todo.count else { continue }
+                let day = dateText(Date(timeIntervalSince1970: TimeInterval(back.int("since"))), "dd/MM")
+                log.add("\(t): read back to \(day) for \(todo[idx].0.item.code) (posted before the cut-off)")
+            }
             let hits = res.obj("hits") ?? [:]
             let hitKeys = Array(hits.keys).sorted { (Int($0) ?? 0) < (Int($1) ?? 0) }
             for k in hitKeys {

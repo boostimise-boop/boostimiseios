@@ -48,6 +48,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -176,23 +177,30 @@ fun CodeListBox(text: String, onChange: (String) -> Unit, placeholder: String = 
     }
 }
 
+/** "Search in": all chats, all groups, a name, one chat, or (with [ticked], the chats kept for it) the ticked chats. */
 @Composable
-fun ChatFilterPicker(filter: ChatFilter, onChange: (ChatFilter) -> Unit) {
+fun ChatFilterPicker(filter: ChatFilter, ticked: MutableList<Pair<String, String>>? = null, onChange: (ChatFilter) -> Unit) {
     var open by remember { mutableStateOf(false) }
+    var ticking by remember { mutableStateOf(false) }
     Box {
         OutlinedTextField(filter.label, {}, readOnly = true, label = { Text("Search in") },
             trailingIcon = { Icon(Icons.Filled.ArrowDropDown, null) }, modifier = Modifier.fillMaxWidth())
         Box(Modifier.matchParentSize().clickable { open = true })
     }
-    if (open) ChatDialog(true, { open = false }) { pick ->
+    if (ticked != null && filter.ids.isNotEmpty()) Hint(ticked.joinToString(", ") { it.second.ifEmpty { it.first } })
+    if (open) ChatDialog(true, { open = false }, ticked?.let { { open = false; ticking = true } }) { pick ->
         onChange(pick)
         open = false
     }
+    if (ticking && ticked != null) TickChatsDialog(ticked, { ticking = false }) {
+        onChange(ChatFilter(ids = ticked.map { it.first }))
+        ticking = false
+    }
 }
 
-/** Pick a chat (or, with [filters], all chats / all groups / a name to search for). */
+/** Pick a chat (or, with [filters], all chats / all groups / a name to search for; with [onTicked], ticked chats). */
 @Composable
-fun ChatDialog(filters: Boolean, onDismiss: () -> Unit, onPick: (ChatFilter) -> Unit) {
+fun ChatDialog(filters: Boolean, onDismiss: () -> Unit, onTicked: (() -> Unit)? = null, onPick: (ChatFilter) -> Unit) {
     var q by remember { mutableStateOf("") }
     val chats = WaEngine.chats.filter { q.isBlank() || it.title.contains(q, ignoreCase = true) }.take(300)
     AlertDialog(onDismissRequest = onDismiss, confirmButton = { TextButton(onDismiss) { Text("Close") } },
@@ -205,10 +213,57 @@ fun ChatDialog(filters: Boolean, onDismiss: () -> Unit, onPick: (ChatFilter) -> 
                     if (filters) {
                         item { ChatLine("All chats") { onPick(ChatFilter()) } }
                         item { ChatLine("All groups") { onPick(ChatFilter(groupsOnly = true)) } }
+                        if (onTicked != null) item { ChatLine("Ticked chats…", "choose several") { onTicked() } }
                         if (q.isNotBlank()) item { ChatLine("Chats whose name contains \"$q\"") { onPick(ChatFilter(title = q)) } }
                         item { HorizontalDivider() }
                     }
                     items(chats, key = { it.id }) { c -> ChatLine(c.title, if (c.isGroup) "group" else null) { onPick(ChatFilter(c.id, c.title)) } }
+                }
+            }
+        })
+}
+
+/** Tick the chats to search in; [ticked] (id, title of each) is updated when they are confirmed. */
+@Composable
+fun TickChatsDialog(ticked: MutableList<Pair<String, String>>, onDismiss: () -> Unit, onDone: () -> Unit) {
+    val sel = remember { mutableStateListOf(*ticked.toTypedArray()) }
+    var q by remember { mutableStateOf("") }
+    var tickedOnly by remember { mutableStateOf(false) }
+    val ids = sel.map { it.first }.toSet()
+    // the chats ticked before first (even if WhatsApp has not listed them yet), then WhatsApp's order
+    val rows = remember(WaEngine.chats) {
+        val known = WaEngine.chats.associateBy { it.id }
+        val before = ticked.map { it.first }.toSet()
+        ticked.map { (id, title) -> id to (known[id]?.title ?: title) } +
+            WaEngine.chats.filter { it.id !in before }.map { it.id to it.title }
+    }
+    val shown = rows.filter { (id, title) -> (q.isBlank() || title.contains(q, ignoreCase = true)) && (!tickedOnly || id in ids) }
+    AlertDialog(onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton({ ticked.clear(); ticked.addAll(sel); onDone() }, enabled = sel.isNotEmpty()) { Text("Search these") }
+        },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
+        title = { Text("Ticked chats") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedTextField(q, { q = it }, label = { Text("Search chats") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                if (WaEngine.chats.isEmpty()) Hint("Open WhatsApp first (the WhatsApp page in the menu) to load your chats.")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (sel.isEmpty()) "Tick the chats to search in" else "${sel.size} chat(s) ticked",
+                        Modifier.weight(1f), color = Brand.TEXT_2, fontSize = 13.sp)
+                    if (sel.isNotEmpty()) TextButton({ sel.clear() }) { Text("Untick all") }
+                    TextButton({ tickedOnly = !tickedOnly }) { Text(if (tickedOnly) "Show all" else "Ticked only") }
+                }
+                LazyColumn(Modifier.heightIn(max = 380.dp)) {
+                    items(shown, key = { it.first }) { (id, title) ->
+                        val on = id in ids
+                        val toggle = { if (on) sel.removeAll { it.first == id } else sel.add(id to title) }
+                        Row(Modifier.fillMaxWidth().clickable { toggle() }, verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(on, { toggle() })
+                            Text(title.ifEmpty { id }, Modifier.weight(1f), fontSize = 15.sp)
+                            if (id.endsWith("@g.us")) Text("group", color = Brand.MUTED, fontSize = 12.sp)
+                        }
+                    }
                 }
             }
         })

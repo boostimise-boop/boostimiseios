@@ -72,7 +72,7 @@ struct FetchScreen: View {
                 if !t.rows.isEmpty { Hint("\(t.rows.count) codes") }
             }
             Card(title: "2  Settings") {
-                ChatFilterPicker(filter: $t.chat)
+                ChatFilterPicker(filter: $t.chat, ticked: $t.tickedChats)
                 CheckRow("A chat for each list (6-, 5a- …)", Binding(get: { t.perList }, set: {
                     t.perList = $0
                     if $0 { t.autoFillListChats() }

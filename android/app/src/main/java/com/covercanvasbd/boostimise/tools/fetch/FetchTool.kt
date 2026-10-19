@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.covercanvasbd.boostimise.core.CodeItem
 import com.covercanvasbd.boostimise.core.Codes
+import com.covercanvasbd.boostimise.core.ProductCode
 import com.covercanvasbd.boostimise.core.Storage
 import com.covercanvasbd.boostimise.core.jsonOf
 import com.covercanvasbd.boostimise.core.objects
@@ -34,11 +35,14 @@ class ToolLog {
     fun clear() = lines.clear()
 }
 
-/** Chat filter: all chats, all groups, one chat (by id) or chats whose name contains a text. */
-data class ChatFilter(val id: String = "", val title: String = "", val groupsOnly: Boolean = false) {
-    fun toJs(since: Long) = jsonOf("since" to since, "chatId" to id, "chatTitle" to title, "groupsOnly" to groupsOnly)
+/** Chat filter: all chats, all groups, the ticked chats ([ids]), one chat (by id) or chats whose name contains a text. */
+data class ChatFilter(val id: String = "", val title: String = "", val groupsOnly: Boolean = false,
+                      val ids: List<String> = emptyList()) {
+    fun toJs(since: Long) = jsonOf("since" to since, "chatId" to id, "chatIds" to JSONArray(ids), "chatTitle" to title,
+        "groupsOnly" to groupsOnly)
     val label get() = when {
         groupsOnly -> "All groups"
+        ids.isNotEmpty() -> "Ticked chats (${ids.size})"
         id.isNotEmpty() || title.isNotEmpty() -> title
         else -> "All chats"
     }
@@ -113,8 +117,14 @@ class FetchTool(val key: String, val title: String, private val scope: Coroutine
 
     // settings (remembered)
     var folder by mutableStateOf(prefs.getString("folder", title)!!)
+    /** The chats ticked for "Ticked chats" ({id, title}), kept while another choice is in use. */
+    val tickedChats = mutableStateListOf<Pair<String, String>>().apply {
+        val saved = runCatching { JSONArray(prefs.getString("ticked_chats", "[]")) }.getOrElse { JSONArray() }
+        for (o in saved.objects()) if (o.optString("id").isNotEmpty()) add(o.optString("id") to o.optString("title"))
+    }
     var chat by mutableStateOf(ChatFilter(prefs.getString("chat_id", "")!!, prefs.getString("chat_title", "")!!,
-        prefs.getBoolean("groups_only", false)))
+        prefs.getBoolean("groups_only", false),
+        if (prefs.getBoolean("use_ticked", false)) tickedChats.map { it.first } else emptyList()))
     var neighbors by mutableStateOf(prefs.getString("neighbors", "after")!!)
     var gapMinutes by mutableStateOf(prefs.getInt("gap_minutes", 5))
     var lookbackDays by mutableStateOf(prefs.getInt("lookback_days", 10))
@@ -132,7 +142,9 @@ class FetchTool(val key: String, val title: String, private val scope: Coroutine
             .putBoolean("groups_only", chat.groupsOnly).putString("neighbors", neighbors).putInt("gap_minutes", gapMinutes)
             .putInt("lookback_days", lookbackDays).putBoolean("include_date", includeDate)
             .putBoolean("skip_existing", skipExisting).putBoolean("per_list", perList)
-            .putString("list_chats", listChatsToJson(listChats)).apply()
+            .putString("list_chats", listChatsToJson(listChats)).putBoolean("use_ticked", chat.ids.isNotEmpty())
+            .putString("ticked_chats", JSONArray(tickedChats.map { jsonOf("id" to it.first, "title" to it.second) }).toString())
+            .apply()
     }
 
     /** The lists in the code list, in order, with how many codes each has: [("6-", 7), ("5a-", 22), …]. */
@@ -269,7 +281,12 @@ class FetchTool(val key: String, val title: String, private val scope: Coroutine
                     if (targets.isEmpty()) ": not active since ${since.format(dd)}" else "")
             }
             val codes = JSONArray()
-            for (i in keys) codes.put(jsonOf("key" to i.toString(), "pattern" to Codes.codePattern(todo[i].first.item.code)))
+            for (i in keys) {
+                val code = todo[i].first.item.code
+                val c = jsonOf("key" to i.toString(), "pattern" to Codes.codePattern(code))
+                ProductCode.parts(code)?.let { (prefix, number) -> c.put("prefix", prefix).put("number", number) }
+                codes.put(c)
+            }
             val opts = jsonOf("codes" to codes, "since" to sinceTs, "neighbors" to neighbors, "gapMinutes" to gapMinutes,
                 "maxNeighbors" to 30, "maxLoads" to 300)
             targets.map { it to opts }
@@ -290,6 +307,11 @@ class FetchTool(val key: String, val title: String, private val scope: Coroutine
                 continue
             }
             res.optJSONArray("warnings")?.let { w -> for (k in 0 until w.length()) log.add("$t: ${w.optString(k)}") }
+            for (back in res.optJSONArray("readBack").objects()) {
+                val day = java.time.Instant.ofEpochSecond(back.optLong("since")).atZone(ZoneId.systemDefault())
+                log.add("$t: read back to ${day.format(DateTimeFormatter.ofPattern("dd/MM"))} for " +
+                    "${todo[back.optString("key").toInt()].first.item.code} (posted before the cut-off)")
+            }
             val hits = res.optJSONObject("hits") ?: JSONObject()
             val hitKeys = hits.keys().asSequence().toList()
             for (k in hitKeys) {

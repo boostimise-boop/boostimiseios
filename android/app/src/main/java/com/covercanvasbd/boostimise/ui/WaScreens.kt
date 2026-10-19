@@ -95,7 +95,7 @@ fun FetchScreen(t: FetchTool) {
             if (t.rows.isNotEmpty()) Hint("${t.rows.size} codes")
         }
         Section("2  Settings") {
-            ChatFilterPicker(t.chat) { t.chat = it }
+            ChatFilterPicker(t.chat, t.tickedChats) { t.chat = it }
             CheckRow("A chat for each list (6-, 5a- …)", t.perList) { t.perList = it; if (it) t.autoFillListChats() }
             if (t.perList) ListChats(t.lists(), t.listChats, t.chat) { t.autoFillListChats() }
             Select("Take", NEIGHBOUR_MODES, t.neighbors) { t.neighbors = it }

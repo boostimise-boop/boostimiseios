@@ -299,9 +299,10 @@ struct CodeListBox: View {
     }
 }
 
-/// Pick a chat (or, with `filters`, all chats / all groups / a name to search for).
+/// Pick a chat (or, with `filters`, all chats / all groups / a name to search for; with `ticked`, the ticked chats).
 struct ChatPickerSheet: View {
     let filters: Bool
+    var ticked: Binding<[WaChat]>? = nil
     let onPick: (ChatFilter) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var q = ""
@@ -318,6 +319,17 @@ struct ChatPickerSheet: View {
                     Section {
                         row("All chats") { pick(ChatFilter()) }
                         row("All groups") { pick(ChatFilter(groupsOnly: true)) }
+                        if let ticked {
+                            NavigationLink {
+                                TickChatsView(ticked: ticked) { pick(ChatFilter(ids: ticked.wrappedValue.map(\.id))) }
+                            } label: {
+                                HStack {
+                                    Text("Ticked chats…").foregroundStyle(Brand.navy)
+                                    Spacer()
+                                    Text("choose several").font(.system(size: 12)).foregroundStyle(Brand.muted)
+                                }
+                            }
+                        }
                         if !q.trimmed.isEmpty { row("Chats whose name contains \"\(q)\"") { pick(ChatFilter(title: q)) } }
                     }
                 }
@@ -350,14 +362,91 @@ struct ChatPickerSheet: View {
     }
 }
 
+/// Tick the chats to search in; `ticked` is updated when they are confirmed with "Search these".
+struct TickChatsView: View {
+    @Binding var ticked: [WaChat]
+    let onDone: () -> Void
+    @State private var sel: [WaChat] = []
+    @State private var loaded = false
+    @State private var q = ""
+    @State private var tickedOnly = false
+
+    var body: some View {
+        let wa = WaEngine.shared
+        let ids = Set(sel.map(\.id))
+        let before = Set(ticked.map(\.id))
+        let known = Dictionary(wa.chats.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        // the chats ticked before first (even if WhatsApp has not listed them yet), then WhatsApp's order
+        let rows = ticked.map { known[$0.id] ?? $0 } + wa.chats.filter { !before.contains($0.id) }
+        let shown = rows.filter {
+            (q.trimmed.isEmpty || $0.title.localizedCaseInsensitiveContains(q)) && (!tickedOnly || ids.contains($0.id))
+        }
+        List {
+            if wa.chats.isEmpty {
+                Hint("Open WhatsApp first (the WhatsApp page in the menu) to load your chats.")
+            }
+            Section {
+                HStack(spacing: 12) {
+                    Text(sel.isEmpty ? "Tick the chats to search in" : "\(sel.count) chat(s) ticked")
+                        .font(.system(size: 13)).foregroundStyle(Brand.text2)
+                    Spacer()
+                    if !sel.isEmpty { LinkButton("Untick all") { sel.removeAll() } }
+                    LinkButton(tickedOnly ? "Show all" : "Ticked only") { tickedOnly.toggle() }
+                }
+            }
+            Section {
+                ForEach(shown) { c in
+                    let on = ids.contains(c.id)
+                    Button {
+                        if on { sel.removeAll { $0.id == c.id } } else { sel.append(c) }
+                    } label: {
+                        HStack {
+                            Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(on ? Brand.accent : Brand.muted)
+                            Text(c.title.isEmpty ? c.id : c.title).foregroundStyle(Brand.navy)
+                            Spacer()
+                            if c.isGroup { Text("group").font(.system(size: 12)).foregroundStyle(Brand.muted) }
+                        }
+                    }
+                }
+            }
+        }
+        .searchable(text: $q, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search chats")
+        .navigationTitle("Ticked chats")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Search these") {
+                    ticked = sel
+                    onDone()
+                }
+                .disabled(sel.isEmpty)
+            }
+        }
+        .onAppear {
+            if !loaded {
+                sel = ticked
+                loaded = true
+            }
+        }
+    }
+}
+
+/// "Search in": all chats, all groups, a name, one chat, or (with `ticked`, the chats kept for it) the ticked chats.
 struct ChatFilterPicker: View {
     @Binding var filter: ChatFilter
+    var ticked: Binding<[WaChat]>? = nil
     @State private var open = false
 
     var body: some View {
-        Button { open = true } label: { FieldBox(label: "Search in", value: filter.label) }
-            .buttonStyle(.plain)
-            .sheet(isPresented: $open) { ChatPickerSheet(filters: true) { filter = $0 } }
+        VStack(alignment: .leading, spacing: 4) {
+            Button { open = true } label: { FieldBox(label: "Search in", value: filter.label) }
+                .buttonStyle(.plain)
+                .sheet(isPresented: $open) { ChatPickerSheet(filters: true, ticked: ticked) { filter = $0 } }
+            if let ticked, !filter.ids.isEmpty {
+                Hint(ticked.wrappedValue.map { $0.title.isEmpty ? $0.id : $0.title }.joined(separator: ", "))
+            }
+        }
     }
 }
 

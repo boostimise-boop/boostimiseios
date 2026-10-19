@@ -38,6 +38,17 @@ object ProductCode {
     fun norm(prefix: String, number: String) = "${prefix.lowercase()}-${number.toInt()}"
     fun split(code: String): Pair<String, Int> = code.substringBeforeLast('-') to code.substringAfterLast('-').toInt()
 
+    private val PREFIX_RE = Regex(PREFIX)
+
+    /** ("4a", 205) for "4a-205" (scanChat reads a chat further back when its codes start after this one);
+     *  null for anything that is not a code. */
+    fun parts(code: String): Pair<String, Int>? {
+        val c = listCode(code)
+        if ('-' !in c) return null
+        val (prefix, number) = c.substringBeforeLast('-') to (c.substringAfterLast('-').toIntOrNull() ?: return null)
+        return if (PREFIX_RE.matches(prefix)) prefix to number else null
+    }
+
     /** The numbers in group 4 of CHAT_CODE: "+2-153-154" -> [153, 154]. */
     fun moreNumbers(prefix: String, more: String): List<String> {
         val r = synchronized(moreRes) {

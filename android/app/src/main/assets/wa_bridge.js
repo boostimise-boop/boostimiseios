@@ -141,6 +141,32 @@
 
   const oldestT = (arr) => arr.reduce((min, m) => Math.min(min, (m && m.t) || Infinity), Infinity);
 
+  // Prefix and number of every code written with a dash (any dash or _): "4a-205" -> 4a, 205.
+  const CODE_PARTS = /(?<![0-9A-Za-z])(\d{1,3}[A-Za-z]{0,2})\s*[-‐-―_]\s*(\d{1,6})(?![0-9A-Za-z])/g;
+
+  // The numbers of the codes of each prefix written in the messages: {'4a': [206, 207, 200], ...}.
+  function codeNumbers(arr) {
+    const nums = {};
+    for (const m of arr) {
+      const text = textOf(m);
+      if (!text) continue;
+      for (const [, p, n] of text.matchAll(CODE_PARTS)) {
+        (nums[p.toLowerCase()] || (nums[p.toLowerCase()] = [])).push(parseInt(n, 10));
+      }
+    }
+    return nums;
+  }
+
+  // Time of the oldest message about the code before `before` (0 if none).
+  function firstMention(arr, re, before) {
+    let t = 0;
+    for (const m of arr) {
+      const mt = (m && m.t) || 0;
+      if (mt && mt < before && (!t || mt < t) && re.test(textOf(m))) t = mt;
+    }
+    return t;
+  }
+
   // downloadAndMaybeDecrypt() wants a performance-logger object; this stub accepts any call.
   function fakeQpl() {
     const p = new Proxy(function () {}, {
@@ -218,14 +244,16 @@
     },
 
     // Chats to read: matching the filter and with activity since `since` (unix seconds).
-    // opts: {since, chatId?, chatTitle?, groupsOnly?}
+    // opts: {since, chatId?, chatIds?, chatTitle?, groupsOnly?}
     scanTargets(opts) {
       const M = need();
       const needle = (opts.chatTitle || '').toLowerCase();
+      const picked = new Set(opts.chatIds || []);
       return models(M.Chat)
         .filter((c) => {
           const id = ser(c.id);
           if (!id || id.endsWith('@broadcast')) return false;
+          if (picked.size) return picked.has(id);
           if (opts.chatId) return id === opts.chatId;
           if (opts.groupsOnly && !id.endsWith('@g.us')) return false;
           if (needle && !chatTitle(M, c).toLowerCase().includes(needle)) return false;
@@ -236,13 +264,16 @@
     },
 
     // Read one chat back to `since` and find the photos for every code in one pass.
-    // opts: {codes: [{key, pattern}], since, neighbors, gapMinutes, maxNeighbors, maxLoads}
+    // opts: {codes: [{key, pattern, prefix?, number?}], since, neighbors, gapMinutes, maxNeighbors,
+    //        maxLoads, extraDays?}
     async scanChat(chatId, opts) {
       const M = need();
       const chat = M.Chat.get(chatId);
       if (!chat || !chat.msgs) return { error: 'chat not found' };
-      const codes = opts.codes.map((c) => ({ key: c.key, re: new RegExp(c.pattern, 'i') }));
       const since = opts.since || 0;
+      const codes = opts.codes.map((c) => ({
+        key: c.key, re: new RegExp(c.pattern, 'i'), prefix: (c.prefix || '').toLowerCase(), number: c.number || 0, since,
+      }));
       const mode = opts.neighbors || 'none';
       const after = mode === 'after' || mode === 'both';
       const before = mode === 'before' || mode === 'both';
@@ -255,14 +286,19 @@
       if (chat.msgs.msgLoadState) chat.msgs.msgLoadState.noEarlierMsgs = false;
       let loads = 0;
       let exhausted = false;
-      while (oldestT(models(chat.msgs)) > since && loads < (opts.maxLoads || 300)) {
+      const maxLoads = opts.maxLoads || 300;
+      const loadMore = async () => {
         const prevLen = models(chat.msgs).length;
         let got;
-        try { got = await loadEarlier(M.Load, chat); } catch (e) { warnings.push(errMsg(e)); break; }
+        try { got = await loadEarlier(M.Load, chat); } catch (e) { warnings.push(errMsg(e)); return false; }
         loads++;
-        if (!got || !got.length || models(chat.msgs).length === prevLen) { exhausted = true; break; }
+        if (!got || !got.length || models(chat.msgs).length === prevLen) { exhausted = true; return false; }
+        return true;
+      };
+      while (oldestT(models(chat.msgs)) > since && loads < maxLoads) {
+        if (!(await loadMore())) break;
       }
-      const arr = models(chat.msgs).slice();
+      const reached = oldestT(models(chat.msgs)) <= since;
 
       const hits = {};
       const mentions = {};
@@ -271,22 +307,56 @@
         const id = ser(m.id);
         if (!bucket[id]) bucket[id] = info(M, m, via);
       };
-      for (let i = 0; i < arr.length; i++) {
-        const m = arr[i];
-        if (!m || !m.id || (m.t || 0) < since) continue;
-        const text = textOf(m);
-        if (!text) continue;
-        const found = codes.filter((c) => c.re.test(text));
-        if (!found.length) continue;
-        const distinct = new Set((text.match(ANY_CODE) || []).map((s) => s.replace(/\s+/g, '').toLowerCase()));
-        const isList = found.length > 1 || distinct.size > 1;
-        for (const c of found) mentions[c.key] = (mentions[c.key] || 0) + 1;
-        if (isImage(m)) for (const c of found) add(c.key, m, 'caption');
-        if (!isList && mode !== 'none') {
-          const c = found[0];
-          if (after) walk(arr, i, +1, m, c.re, gapSec, maxN).forEach((x) => add(c.key, x, 'nearby'));
-          if (before) walk(arr, i, -1, m, c.re, gapSec, maxN).forEach((x) => add(c.key, x, 'nearby'));
+      // Photos of `list` codes in messages from each code's `since` on.
+      const match = (arr, list) => {
+        const from = Math.min(...list.map((c) => c.since));
+        for (let i = 0; i < arr.length; i++) {
+          const m = arr[i];
+          if (!m || !m.id || (m.t || 0) < from) continue;
+          const text = textOf(m);
+          if (!text) continue;
+          const found = list.filter((c) => (m.t || 0) >= c.since && c.re.test(text));
+          if (!found.length) continue;
+          const distinct = new Set((text.match(ANY_CODE) || []).map((s) => s.replace(/\s+/g, '').toLowerCase()));
+          const isList = found.length > 1 || distinct.size > 1;
+          for (const c of found) mentions[c.key] = (mentions[c.key] || 0) + 1;
+          if (isImage(m)) for (const c of found) add(c.key, m, 'caption');
+          if (!isList && mode !== 'none') {
+            const c = found[0];
+            if (after) walk(arr, i, +1, m, c.re, gapSec, maxN).forEach((x) => add(c.key, x, 'nearby'));
+            if (before) walk(arr, i, -1, m, c.re, gapSec, maxN).forEach((x) => add(c.key, x, 'nearby'));
+          }
         }
+      };
+      if (codes.length) match(models(chat.msgs).slice(), codes);
+
+      // Codes count up in each group. A code with no photos here, in a chat whose codes of that prefix
+      // in the window are mostly past it (4a-206, 4a-207... when 4a-205 is wanted), was posted just
+      // before the cut-off: read back until it comes up (one page more for the rest of its album), at
+      // most `extraDays` more, and take its photos from there.
+      const floor = since - (opts.extraDays == null ? 30 : opts.extraDays) * 86400;
+      const nums = codeNumbers(models(chat.msgs).filter((m) => m && (m.t || 0) >= since));
+      const late = !reached ? [] : codes.filter((c) => {
+        const ns = c.prefix && c.number && !hits[c.key] ? nums[c.prefix] || [] : [];
+        return ns.filter((n) => n > c.number).length > 2 * ns.filter((n) => n <= c.number).length;
+      });
+      const unseen = () => late.filter((c) => !firstMention(models(chat.msgs), c.re, since));
+      let pending = unseen();
+      let extra = 1;
+      while (late.length && !exhausted && oldestT(models(chat.msgs)) > floor && loads < maxLoads) {
+        if (!pending.length && extra-- <= 0) break;
+        if (!(await loadMore())) break;
+        pending = unseen();
+      }
+      const arr = models(chat.msgs).slice();
+      const found = late.filter((c) => {
+        const t = firstMention(arr, c.re, since);
+        if (t) c.since = Math.max(floor, t - gapSec);
+        return !!t;
+      });
+      if (found.length) {
+        for (const c of found) delete mentions[c.key];  // counted again below, with the older messages
+        match(arr, found);
       }
 
       const out = {};
@@ -299,6 +369,7 @@
         oldest: Number.isFinite(oldest) ? oldest : 0,
         reached: oldest <= since,
         exhausted,
+        readBack: found.filter((c) => hits[c.key]).map((c) => ({ key: c.key, since: c.since })),
         hits: out,
         mentions,
         warnings,

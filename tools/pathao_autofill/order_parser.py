@@ -20,13 +20,22 @@ from core import codes
 
 _BN_DIGITS = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
 
-# One code per line in the list file: "6-830", "5a-380" (also typed "6:830", "6_830+" ...)
-_LIST_LINE = re.compile(r"^\s*(" + codes.PREFIX + r")\s*" + codes.SEP + r"\s*(\d{1,6})[\s+\-]*$", re.I)
-# The code at the start of one of the first lines of a message, with the codes of the same list written
-# after it ("3-163+164", "2-151-152", "2:152+2-153"); see core/codes.py.
-_CODE_LINE = re.compile(r"^\W*(?:(?:order|code|id|অর্ডার|কোড)\W*)?" + codes.CHAT_CODE, re.I)
+# Codes are read in the shop's code style (core/codes.py: 2-558, CC1023, #1023), which can change while
+# the app runs, so the patterns come from codes.reader() on every call.
 # Any code written with a dash, with the codes after it ("2-151-152"), so its numbers are not read as the amount
-_CODE_ANY = re.compile(r"(?<!\w)" + codes.CHAT_CODE.replace(codes.SEP, codes.DASH, 1), re.I)
+_CODE_ANY_PREFIX = re.compile(r"(?<!\w)" + codes.CHAT_CODE.replace(codes.SEP, codes.DASH, 1), re.I)
+
+
+def _list_line_code(line):
+    """The key of a list file line that holds just a code ("6-830", "6:830", "5a_380+", "CC1023",
+    "#1023"), or None."""
+    r = codes.reader()
+    return r.normalize(line) if r.code_parts(line) else None
+
+
+def _code_any():
+    r = codes.reader()
+    return _CODE_ANY_PREFIX if r.kind == "prefix" else re.compile(r"(?<!\w)" + r.chat_code, re.I)
 
 # Bangladeshi mobile numbers: 01XXXXXXXXX, +8801XXXXXXXXX, 01734-484040, 1734484040
 _PHONE = re.compile(r"(?<!\d)(?:\+?88[ -]?)?(0?1[3-9](?:[ -]?\d){8})(?!\d)")
@@ -102,9 +111,8 @@ def read_code_list(path):
     found, seen = [], set()
     with open(path, encoding="utf-8-sig", errors="replace") as f:
         for line in f:
-            m = _LIST_LINE.match(line.translate(_BN_DIGITS))
-            if m:
-                code = normalize_code(*m.groups())
+            code = _list_line_code(line)
+            if code:
                 if code not in seen:
                     seen.add(code)
                     found.append(code)
@@ -122,8 +130,7 @@ def write_phone_to_list(path, code, phone):
     changed = False
     for i, line in enumerate(lines):
         body = line.rstrip("\r")
-        m = _LIST_LINE.match(body.translate(_BN_DIGITS))
-        if m and normalize_code(*m.groups()) == code:
+        if _list_line_code(body) == code:
             lines[i] = body.rstrip() + "\t  " + phone + line[len(body):]
             changed = True
     if changed:
@@ -141,13 +148,9 @@ def _clean(line):
 
 
 def find_codes(text):
-    """The order codes a message starts with: ["6-872"], ["3-163", "3-164"] for "3-163+164", or []."""
-    lines = [l for l in (_clean(l) for l in (text or "").splitlines()) if l]
-    for line in lines[:3]:
-        m = _CODE_LINE.match(line)
-        if m:
-            return codes.match_codes(m)
-    return []
+    """The order codes a message starts with: ["6-872"], ["3-163", "3-164"] for "3-163+164", ["1023"]
+    for "Order: #1023", or [] (in the shop's code style)."""
+    return codes.order_codes(text)
 
 
 def find_phones(text):
@@ -199,7 +202,7 @@ def _find_name(lines):
 
 def _numbers(line, alone=False):
     t = _PHONE.sub(" ", line)
-    t = _CODE_ANY.sub(" ", t)
+    t = _code_any().sub(" ", t)
     t = re.sub(r"(?i)(tk|taka|bdt|৳)(?=\d)", r"\1 ", t)
     values = []
     for m in (_NUMBER_ALONE if alone else _NUMBER).finditer(t):
@@ -268,9 +271,9 @@ def parse_order(text):
     lines = [l for l in (_clean(l) for l in (text or "").splitlines()) if l]
     code, code_line = "", -1
     for i, line in enumerate(lines[:3]):
-        m = _CODE_LINE.match(line)
-        if m:
-            code, code_line = normalize_code(m.group(1), m.group(3)), i
+        found = codes.order_codes(line)
+        if found:
+            code, code_line = found[0], i
             break
     body = [l for i, l in enumerate(lines) if i != code_line]
 

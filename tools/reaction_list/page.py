@@ -1,4 +1,5 @@
-"""Reaction List: the codes whose WhatsApp messages were reacted with ❌, 📵, 😥 or the emojis typed
+"""Reaction List: the codes whose WhatsApp messages were reacted with one of the shop's reactions
+(core/shop.py: ❌, 📵, 😥 until the seller changes them, each with what it means) or the emojis typed
 for "Custom".
 
 Reads the chats in the shared WhatsApp window (core/whatsapp.py) back to the "Look back" date and
@@ -21,13 +22,14 @@ from PySide6.QtWidgets import (
     QPushButton, QSpinBox, QSplitter, QStyle, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from core import theme
+from core import shop, theme
 from core.paths import data_dir
 from core.ui import FlowLayout, scrollable
 from tools.whatsapp_fetch.helpers import CodeItem, parse_code_list
 from tools.whatsapp_fetch.page import ALL_CHATS, ALL_GROUPS, STACK_BELOW, STATE_COLORS, default_browse_dir, user_dir
 
-from .helpers import CHOICES, CUSTOM, DEFAULT_CHOICE, Found, code_sort_key, custom_reactions, format_list, normalize
+from .helpers import (CUSTOM, DEFAULT_CHOICE, Found, choice_key, code_sort_key, custom_reactions, format_list,
+                      make_choices, normalize, reaction_labels)
 from .worker import ReactionListWorker
 
 COLS = ["#", "Code", "Name", "Reaction", "Phone", "Chat", "Date", "Photos"]
@@ -56,6 +58,8 @@ class ReactionListPage(QMainWindow):
         self.list_codes: dict[str, tuple[int, CodeItem]] = {}  # the pasted codes of the run, by normalize()
         self.results: dict[str, Found] = {}
         self.wanted: tuple[str, ...] = ()  # reactions of the run, in the order they are shown
+        self.shop = shop.get()
+        self.choices = make_choices(self.shop.reactions())
         self.wa_state = "idle"
         self.job_running = False
         self.pending_job: tuple[list, dict] | None = None
@@ -96,20 +100,14 @@ class ReactionListPage(QMainWindow):
         # 2. which reaction, where
         set_box = QGroupBox("2  Reaction")
         self.choice_group = QButtonGroup(self)
-        choice_row = FlowLayout()
-        for i, (_, label, _, tip) in enumerate(CHOICES):
-            btn = QPushButton(label, objectName="choice", checkable=True)
-            btn.setToolTip(tip)
-            btn.setCursor(Qt.PointingHandCursor)
-            self.choice_group.addButton(btn, i)
-            choice_row.addWidget(btn)
-        self.custom_btn = self.choice_group.button(self._custom_index())
-        self.custom_btn.toggled.connect(lambda on: on and self.custom_edit.setFocus())
+        self.choice_row = choice_row = FlowLayout()
         self.custom_edit = QLineEdit()
         self.custom_edit.setPlaceholderText("Custom: type your reactions, e.g. 👍 ❤️ 🔥")
         self.custom_edit.setToolTip("Any emojis, with or without spaces. Skin tones count as the same reaction "
                                     "(👍🏻 = 👍); 😥 also counts 😢.")
         self.custom_edit.textEdited.connect(lambda _: self.custom_btn.setChecked(True))
+        self._build_choices()
+        self.shop.changed.connect(self._on_shop_changed)
 
         self.chat_combo = QComboBox()
         self.chat_combo.setEditable(True)
@@ -275,9 +273,7 @@ class ReactionListPage(QMainWindow):
         self.chat_combo.setCurrentText(s.value("chat", ALL_CHATS))
         self.lookback_spin.setValue(int(s.value("lookback_days", 10)))
         self.custom_edit.setText(s.value("custom_reactions", ""))
-        keys = [c[0] for c in CHOICES]
-        choice = s.value("reaction", DEFAULT_CHOICE)
-        self.choice_group.button(keys.index(choice if choice in keys else DEFAULT_CHOICE)).setChecked(True)
+        self._check_choice(choice_key(s.value("reaction", DEFAULT_CHOICE)))
         self.fetch_combo.setCurrentIndex(1 if s.value("with_photos", False, type=bool) else 0)
         self.photos_edit.setText(s.value("photos_dir", str(user_dir(QStandardPaths.PicturesLocation, "Pictures")
                                                            / "Reaction List")))
@@ -301,13 +297,45 @@ class ReactionListPage(QMainWindow):
         if path:
             self.photos_edit.setText(path)
 
-    @staticmethod
-    def _custom_index() -> int:
-        return [c[0] for c in CHOICES].index(CUSTOM)
+    def _build_choices(self):
+        """One button per reaction of the shop settings, then All and Custom."""
+        for btn in self.choice_group.buttons():
+            self.choice_group.removeButton(btn)
+        while self.choice_row.count():
+            w = self.choice_row.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        for i, (_, label, _, tip) in enumerate(self.choices):
+            btn = QPushButton(label, objectName="choice", checkable=True)
+            btn.setToolTip(tip)
+            btn.setCursor(Qt.PointingHandCursor)
+            self.choice_group.addButton(btn, i)
+            self.choice_row.addWidget(btn)
+        self.custom_btn = self.choice_group.button(len(self.choices) - 1)
+        self.custom_btn.toggled.connect(lambda on: on and self.custom_edit.setFocus())
+
+    def _check_choice(self, key: str):
+        keys = [c[0] for c in self.choices]
+        idx = keys.index(key) if key in keys else keys.index(DEFAULT_CHOICE) if DEFAULT_CHOICE in keys else 0
+        self.choice_group.button(idx).setChecked(True)
+
+    def _on_shop_changed(self):
+        choices = make_choices(self.shop.reactions())
+        if choices == self.choices:
+            return
+        key = self._choice()[0]
+        self.choices = choices
+        self._build_choices()
+        self._check_choice(key)
+        self._update_buttons()
+        self._refresh_table()
+
+    def _labels(self) -> dict[str, str]:
+        return reaction_labels(self.shop.reactions())
 
     def _choice(self) -> tuple:
         """(key, label, emojis, tip); for Custom the emojis typed in its box."""
-        choice = CHOICES[max(self.choice_group.checkedId(), 0)]
+        choice = self.choices[max(self.choice_group.checkedId(), 0)]
         if choice[0] != CUSTOM:
             return choice
         emojis = custom_reactions(self.custom_edit.text())
@@ -345,7 +373,7 @@ class ReactionListPage(QMainWindow):
         self.table.setRowCount(len(rows))
         for r, f in enumerate(rows):
             when = datetime.fromtimestamp(f.t).strftime("%d/%m %H:%M") if f.t else ""
-            values = [str(r + 1), f.code, f.name, f.react(self.wanted), ", ".join(f.phones), ", ".join(f.chats), when,
+            values = [str(r + 1), f.code, f.name, f.react(self.wanted, self._labels()), ", ".join(f.phones), ", ".join(f.chats), when,
                       f.photos]
             for c, text in enumerate(values):
                 cell = QTableWidgetItem(text)
@@ -387,7 +415,7 @@ class ReactionListPage(QMainWindow):
 
     def _copy(self):
         rows = self._rows()
-        QGuiApplication.clipboard().setText(format_list(rows, self.wanted))
+        QGuiApplication.clipboard().setText(format_list(rows, self.wanted, self._labels()))
         self.statusBar().showMessage(f"Copied {len(rows)} code(s).", 5000)
 
     def _save(self):
@@ -397,7 +425,7 @@ class ReactionListPage(QMainWindow):
         if not path:
             return
         try:
-            Path(path).write_text(format_list(self._rows(), self.wanted), encoding="utf-8-sig")
+            Path(path).write_text(format_list(self._rows(), self.wanted, self._labels()), encoding="utf-8-sig")
         except OSError as e:
             QMessageBox.warning(self, "Not saved", f"Could not save {path}:\n{e}")
             return

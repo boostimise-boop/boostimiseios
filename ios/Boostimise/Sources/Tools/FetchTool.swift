@@ -39,15 +39,14 @@ let NEIGHBOUR_MODES: [(String, String)] = [
     ("both", "Captioned with the code + uncaptioned ones before and after"),
 ]
 
-private let listOfCodeRx = Rx(#"^(.*?)\s*[-‐-―]\s*\d+$"#)
-
-/// The list a code belongs to: "6-" for 6-377, "5a-" for 5A-200 ("" if it has no list prefix).
+/// The list a code belongs to: "6-" for 6-377, "5a-" for 5A-200, "cc-" for CC1023 ("" if it has no list
+/// prefix, like #1023), in the shop's code style.
 func listOfCode(_ code: String) -> String {
-    guard let m = listOfCodeRx.find(code.trimmed) else { return "" }
-    return m.group(1).lowercased() + "-"
+    guard let (prefix, _) = ProductCode.reader().codeParts(code), !prefix.isEmpty else { return "" }
+    return prefix + "-"
 }
 
-/// True if a chat name is for this list, e.g. "Customise Phone Case (6-)" for "6-" (match_renamer's group_in_name).
+/// True if a chat name is for this list, e.g. "My Shop (6-)" for "6-" (match_renamer's group_in_name).
 func listInName(_ list: String, _ name: String) -> Bool {
     guard list.count > 1 else { return false }
     return Rx("(?<![0-9A-Za-z])" + Rx.escape(String(list.dropLast())) + #"\s*-(?!\s*\d)"#, ignoreCase: true).contains(name)
@@ -98,7 +97,7 @@ final class FetchTool {
     var lookbackDays: Int
     var includeDate: Bool
     var skipExisting: Bool
-    /// Each list in its own chat: the 6- codes in "Customise Phone Case (6-)", the 5a- codes in …
+    /// Each list in its own chat: the 6- codes in "My Shop (6-)", the 5a- codes in …
     var perList: Bool
     /// The chat of each list ("6-" -> chat); a list without one is searched in `chat`.
     var listChats: [String: ChatFilter] = [:]
@@ -315,8 +314,8 @@ final class FetchTool {
                     (targets.isEmpty ? ": not active since \(dd)" : ""))
             }
             let codes: [JSON] = keys.map { jsonOf(("key", String($0)), ("pattern", Codes.codePattern(todo[$0].0.item.code))) }
-            let opts = JSONTools.string(jsonOf(("codes", codes), ("since", sinceTs), ("neighbors", neighbors), ("gapMinutes", gapMinutes),
-                                               ("maxNeighbors", 30), ("maxLoads", 300)))
+            let opts = JSONTools.string(ProductCode.scanPatterns(jsonOf(("codes", codes), ("since", sinceTs), ("neighbors", neighbors),
+                                                                        ("gapMinutes", gapMinutes), ("maxNeighbors", 30), ("maxLoads", 300))))
             for t in targets { reads.append((t, opts)) }
         }
         for (n, read) in reads.enumerated() {

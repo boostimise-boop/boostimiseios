@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from core import codes
 from core.codes import code_pattern, list_code, split_code  # noqa: F401  (code_pattern is used by the workers)
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".bmp")
@@ -29,15 +30,15 @@ class CodeItem:
 
 
 def parse_code_list(text: str) -> list[CodeItem]:
-    """Parse lines like '2-558<TAB>Realme C85<TAB>26/9' (tabs or spaces). A code typed '2:558' or
-    '2_558+' is written '2-558'."""
+    """Parse lines like '2-558<TAB>Realme C85<TAB>26/9' (tabs or spaces), in the shop's code style
+    (core/codes.py). A code typed '2:558' or '2_558+' is written '2-558', 'cc 1023' 'CC1023'."""
+    r = codes.reader()
     items = []
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
             continue
-        code, _, rest = line.replace("\t", " ", 1).partition(" ")
-        code = list_code(code)
+        code, rest = r.split_list_line(line)
         if not any(ch.isdigit() for ch in code):
             continue  # header / junk line
         rest = re.sub(r"\s+", " ", rest.replace("\t", " ")).strip()
@@ -52,12 +53,15 @@ def parse_code_list(text: str) -> list[CodeItem]:
 
 def code_parts(code: str) -> dict:
     """{'prefix': '4a', 'number': 205} for '4a-205' (the bridge reads a chat further back when its
-    codes start after this one); {} for anything that is not a code."""
-    try:
-        prefix, number = split_code(list_code(code))
-    except ValueError:
-        return {}
-    return {"prefix": prefix, "number": number} if re.fullmatch(r"\d{1,3}[A-Za-z]{0,2}", prefix) else {}
+    codes start after this one), {'prefix': '', ...} for '#1023'; {} for anything that is not a code."""
+    return codes.reader().code_parts(code)
+
+
+def scan_patterns() -> dict:
+    """How wa_bridge.js tells a list of codes from one code, and counts the codes of each prefix, in the
+    shop's code style (scanChat's opts.anyCode and opts.codeParts)."""
+    r = codes.reader()
+    return {"anyCode": r.js_any_code, "codeParts": r.js_code_parts}
 
 
 def safe_filename(name: str) -> str:

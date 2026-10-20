@@ -13,9 +13,9 @@ from .paths import ASSETS
 
 # packaging/build.py reads these four lines (name, publisher, version of the exe and the setup).
 APP_NAME = "Boostimise"
-APP_PUBLISHER = "Cover Canvas BD"
-APP_VERSION = "4.4.2"
-APP_ID = "CoverCanvasBD.Boostimise"  # Windows taskbar grouping; the setup's shortcuts use the same id
+APP_PUBLISHER = "Boostimise"
+APP_VERSION = "4.5.0"
+APP_ID = "Boostimise.Boostimise"  # Windows taskbar grouping; the setup's shortcuts use the same id
 APP_TAGLINE = "WA Photos • Enhance • Rename • Match"
 APP_NAME_BLUE = "imise"  # the end of the name, which the logo's wordmark writes in blue
 
@@ -72,6 +72,14 @@ _ICONS = {
                 '9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 '
                 '.964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/>'
                 '<path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/>',
+    "wand-sparkles": '<path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72'
+                     'l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72"/><path d="m14 7 3 3"/>'
+                     '<path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/>'
+                     '<path d="M21 16h-4"/><path d="M11 3H9"/>',
+    "store": '<path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/>'
+             '<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/>'
+             '<path d="M2 7h20"/><path d="M22 7v3a2 2 0 0 1-2 2a2.7 2.7 0 0 1-2-1a2.7 2.7 0 0 1-4 0a2.7 2.7 0 0 1-4 0'
+             'a2.7 2.7 0 0 1-4 0a2.7 2.7 0 0 1-2 1a2 2 0 0 1-2-2V7"/>',
     "layout-dashboard": '<rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/>'
                         '<rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>',
     "crown": '<path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519'

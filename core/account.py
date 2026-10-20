@@ -277,6 +277,7 @@ class Account(QObject):
     state_changed = Signal(str)       # LOADING | SIGNED_OUT | ONBOARDING | BLOCKED | READY
     changed = Signal()                # user / status / avatar changed
     live = Signal(int)                # a row changed in the database (Supabase Realtime)
+    table_changed = Signal(str)       # ... in this table
     sign_in_state = Signal(str, str)  # "idle" | "waiting" | "working" | "error", message
     signed_in = Signal()
     signed_out = Signal(str)          # reason ("" = the user signed out)
@@ -640,7 +641,8 @@ class Account(QObject):
                    {"event": "*", "schema": "public", "table": "plans"},
                    {"event": "*", "schema": "public", "table": "profiles", "filter": f"id=eq.{uid}"},
                    {"event": "*", "schema": "public", "table": "subscriptions", "filter": f"user_id=eq.{uid}"},
-                   {"event": "*", "schema": "public", "table": "enhancements", "filter": f"user_id=eq.{uid}"}]
+                   {"event": "*", "schema": "public", "table": "enhancements", "filter": f"user_id=eq.{uid}"},
+                   {"event": "*", "schema": "public", "table": "shop_profiles", "filter": f"user_id=eq.{uid}"}]
         ch = RealtimeChannel(f"account:{uid}", changes, self)
         ch.changed.connect(self._on_live_change)
         ch.state.connect(self._on_realtime_state)
@@ -657,7 +659,8 @@ class Account(QObject):
         self.realtime_state = state
         self.changed.emit()
 
-    def _on_live_change(self, _table: str):
+    def _on_live_change(self, table: str):
+        self.table_changed.emit(table)
         self.live_tick += 1
         self.live.emit(self.live_tick)
         self._reload_timer.start()

@@ -117,7 +117,7 @@ enum Supabase {
 
 /// The saved sign-in lives in the Keychain (not in plain settings).
 enum Keychain {
-    private static let service = "com.covercanvasbd.boostimise"
+    private static let service = "com.boostimise.app"
 
     private static func query(_ key: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: key]

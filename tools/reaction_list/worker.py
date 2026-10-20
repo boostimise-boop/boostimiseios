@@ -13,7 +13,8 @@ from pathlib import Path
 from PySide6.QtCore import Signal
 
 from tools.pathao_autofill.order_parser import find_phones
-from tools.whatsapp_fetch.helpers import CodeItem, code_pattern, existing_output, ext_for, save_images, scan_since
+from tools.whatsapp_fetch.helpers import (CodeItem, code_pattern, existing_output, ext_for, save_images,
+                                          scan_patterns, scan_since)
 from tools.whatsapp_fetch.worker import WhatsAppWorker
 
 from .helpers import code_sort_key, message_codes, normalize
@@ -152,7 +153,7 @@ class ReactionListWorker(WhatsAppWorker):
             res = self._eval(f"([id, o]) => {self.api}.scanChat(id, o)", [cid, {
                 "codes": [{"key": key[c], "pattern": code_pattern(c)} for c in chat_codes],
                 "since": int(since.timestamp()), "neighbors": "after", "gapMinutes": 5, "maxNeighbors": 30,
-                "maxLoads": 300, "reactions": opt["reactions"],
+                "maxLoads": 300, "reactions": opt["reactions"], **scan_patterns(),
             }]) or {}
             if res.get("error"):
                 self.log.emit(f"Photos: {res['error']}")

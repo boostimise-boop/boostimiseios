@@ -18,7 +18,10 @@
   ]);
   // Anything shaped like a product code (2-558, 4a-103). Used to spot list/summary
   // messages that mention several codes, which must not pull in nearby photos.
-  const ANY_CODE = /(?<![0-9A-Za-z])\d{1,3}[A-Za-z]?\s*-\s*\d{2,4}(?![0-9A-Za-z])/g;
+  // scanChat's opts.anyCode replaces it with the shop's code style (core/codes.py: Reader.js_any_code).
+  // Group 1 is the prefix ("" for codes without one, like #1023), group 2 the number.
+  const ANY_CODE = /(?<![0-9A-Za-z])(\d{1,3}[A-Za-z]?)\s*-\s*(\d{2,4})(?![0-9A-Za-z])/g;
+  const codeKey = (m) => (m[1] ? m[1].toLowerCase() + '-' : '') + parseInt(m[2], 10);  // as codes.norm
 
   function req(name) {
     try { return typeof window.require === 'function' ? window.require(name) : null; } catch (e) { return null; }
@@ -141,17 +144,19 @@
 
   const oldestT = (arr) => arr.reduce((min, m) => Math.min(min, (m && m.t) || Infinity), Infinity);
 
-  // Prefix and number of every code written with a dash (any dash or _): "4a-205" -> 4a, 205.
+  // Prefix and number of every code written with a dash (any dash or _): "4a-205" -> 4a, 205. scanChat's
+  // opts.codeParts replaces it with the shop's code style ("" is the prefix of codes like #1023).
   const CODE_PARTS = /(?<![0-9A-Za-z])(\d{1,3}[A-Za-z]{0,2})\s*[-‐-―_]\s*(\d{1,6})(?![0-9A-Za-z])/g;
 
   // The numbers of the codes of each prefix written in the messages: {'4a': [206, 207, 200], ...}.
-  function codeNumbers(arr) {
+  function codeNumbers(arr, re) {
     const nums = {};
     for (const m of arr) {
       const text = textOf(m);
       if (!text) continue;
-      for (const [, p, n] of text.matchAll(CODE_PARTS)) {
-        (nums[p.toLowerCase()] || (nums[p.toLowerCase()] = [])).push(parseInt(n, 10));
+      for (const [, p0, n] of text.matchAll(re || CODE_PARTS)) {
+        const p = (p0 || '').toLowerCase();
+        (nums[p] || (nums[p] = [])).push(parseInt(n, 10));
       }
     }
     return nums;
@@ -265,12 +270,13 @@
 
     // Read one chat back to `since` and find the photos for every code in one pass.
     // opts: {codes: [{key, pattern, prefix?, number?}], since, neighbors, gapMinutes, maxNeighbors,
-    //        maxLoads, extraDays?}
+    //        maxLoads, extraDays?, anyCode?, codeParts?}
     async scanChat(chatId, opts) {
       const M = need();
       const chat = M.Chat.get(chatId);
       if (!chat || !chat.msgs) return { error: 'chat not found' };
       const since = opts.since || 0;
+      const anyCode = opts.anyCode ? new RegExp(opts.anyCode, 'gi') : ANY_CODE;
       const codes = opts.codes.map((c) => ({
         key: c.key, re: new RegExp(c.pattern, 'i'), prefix: (c.prefix || '').toLowerCase(), number: c.number || 0, since,
       }));
@@ -317,7 +323,7 @@
           if (!text) continue;
           const found = list.filter((c) => (m.t || 0) >= c.since && c.re.test(text));
           if (!found.length) continue;
-          const distinct = new Set((text.match(ANY_CODE) || []).map((s) => s.replace(/\s+/g, '').toLowerCase()));
+          const distinct = new Set([...text.matchAll(anyCode)].map(codeKey));
           const isList = found.length > 1 || distinct.size > 1;
           for (const c of found) mentions[c.key] = (mentions[c.key] || 0) + 1;
           if (isImage(m)) for (const c of found) add(c.key, m, 'caption');
@@ -335,9 +341,10 @@
       // before the cut-off: read back until it comes up (one page more for the rest of its album), at
       // most `extraDays` more, and take its photos from there.
       const floor = since - (opts.extraDays == null ? 30 : opts.extraDays) * 86400;
-      const nums = codeNumbers(models(chat.msgs).filter((m) => m && (m.t || 0) >= since));
+      const nums = codeNumbers(models(chat.msgs).filter((m) => m && (m.t || 0) >= since),
+        opts.codeParts ? new RegExp(opts.codeParts, 'gi') : CODE_PARTS);
       const late = !reached ? [] : codes.filter((c) => {
-        const ns = c.prefix && c.number && !hits[c.key] ? nums[c.prefix] || [] : [];
+        const ns = c.number && !hits[c.key] ? nums[c.prefix] || [] : [];
         return ns.filter((n) => n > c.number).length > 2 * ns.filter((n) => n <= c.number).length;
       });
       const unseen = () => late.filter((c) => !firstMention(models(chat.msgs), c.re, since));

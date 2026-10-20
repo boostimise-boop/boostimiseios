@@ -19,7 +19,7 @@ struct ModelDetectScreen: View {
                     ForEach(groups.indices, id: \.self) { i in
                         let p = groups[i].0
                         let codes = groups[i].1
-                        SingleChatPicker(label: "Group \(p)-  (\(codes.count) codes, \(codes.first ?? "") … \(codes.last ?? ""))",
+                        SingleChatPicker(label: (p.isEmpty ? "Orders" : "Group \(p)-") + "  (\(codes.count) codes, \(codes.first ?? "") … \(codes.last ?? ""))",
                                          chat: t.chatFor[p]) { t.chatFor[p] = $0 }
                     }
                 }
@@ -213,7 +213,7 @@ private struct PathaoSettings: View {
         @Bindable var t = self.t
         NavigationStack {
             Form {
-                Section("The WhatsApp chat of each code group") {
+                Section {
                     ForEach($t.chatNames) { $c in
                         HStack {
                             Text("\(c.prefix)-").frame(width: 44, alignment: .leading).foregroundStyle(Brand.text2)
@@ -230,6 +230,10 @@ private struct PathaoSettings: View {
                             }
                         }
                     }
+                } header: {
+                    Text("The WhatsApp chat of each code group")
+                } footer: {
+                    Text("The same as in Shop settings and your other Boostimise apps.")
                 }
                 Section {
                     NumberField(label: "Read order messages of the last", value: $t.lookbackDays, range: 1...365, suffix: "days")
@@ -238,6 +242,7 @@ private struct PathaoSettings: View {
                 }
             }
             .navigationTitle("Pathao Auto-fill settings")
+            .onAppear { t.loadChatNames() }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

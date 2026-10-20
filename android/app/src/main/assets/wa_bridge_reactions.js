@@ -18,7 +18,10 @@
   ]);
   // Anything shaped like a product code (2-558, 4a-103). Used to spot list/summary
   // messages that mention several codes, which must not pull in nearby photos.
-  const ANY_CODE = /(?<![0-9A-Za-z])\d{1,3}[A-Za-z]?\s*-\s*\d{2,4}(?![0-9A-Za-z])/g;
+  // scanChat's opts.anyCode replaces it with the shop's code style (core/codes.py: Reader.js_any_code).
+  // Group 1 is the prefix ("" for codes without one, like #1023), group 2 the number.
+  const ANY_CODE = /(?<![0-9A-Za-z])(\d{1,3}[A-Za-z]?)\s*-\s*(\d{2,4})(?![0-9A-Za-z])/g;
+  const codeKey = (m) => (m[1] ? m[1].toLowerCase() + '-' : '') + parseInt(m[2], 10);  // as codes.norm
 
   function req(name) {
     try { return typeof window.require === 'function' ? window.require(name) : null; } catch (e) { return null; }
@@ -404,6 +407,7 @@
       if (!chat || !chat.msgs) return { error: 'chat not found' };
       const codes = opts.codes.map((c) => ({ key: c.key, re: new RegExp(c.pattern, 'i') }));
       const since = opts.since || 0;
+      const anyCode = opts.anyCode ? new RegExp(opts.anyCode, 'gi') : ANY_CODE;
       const mode = opts.neighbors || 'none';
       const after = mode === 'after' || mode === 'both';
       const before = mode === 'before' || mode === 'both';
@@ -430,7 +434,7 @@
         if (!text) continue;
         const found = codes.filter((c) => c.re.test(text));
         if (!found.length) continue;
-        const distinct = new Set((text.match(ANY_CODE) || []).map((s) => s.replace(/\s+/g, '').toLowerCase()));
+        const distinct = new Set([...text.matchAll(anyCode)].map(codeKey));
         const isList = found.length > 1 || distinct.size > 1;
         for (const c of found) {
           mentions[c.key] = (mentions[c.key] || 0) + 1;

@@ -15,7 +15,8 @@ from PySide6.QtCore import QThread, Signal
 
 from core import whatsapp
 
-from .helpers import CodeItem, code_parts, code_pattern, existing_output, ext_for, save_images, scan_since
+from .helpers import (CodeItem, code_parts, code_pattern, existing_output, ext_for, save_images, scan_patterns,
+                      scan_since)
 
 HERE = Path(__file__).resolve().parent
 # wa_bridge.js: photos of each code (Fetch by Code). wa_bridge_reactions.js: the same, and reads
@@ -197,7 +198,7 @@ class WhatsAppWorker(QThread):
         todo: list[tuple[int, CodeItem, str]] = []
         for row, item in rows:
             base = item.base_name(opt.get("include_date", False))
-            prev = existing_output(out_dir, base) if opt.get("skip_existing", True) else None
+            prev = self._existing(out_dir, base) if opt.get("skip_existing", True) else None
             if prev:
                 self.row_status.emit(row, "skipped", "Already saved", str(prev))
                 stats["skipped"] += 1
@@ -276,6 +277,7 @@ class WhatsAppWorker(QThread):
             "maxNeighbors": 30,
             "maxLoads": 300,
             "reactions": opt.get("reactions", ""),
+            **scan_patterns(),
         }
         for row, _, _ in todo:
             self.row_status.emit(row, "working", "Reading chats…", "")
@@ -338,6 +340,14 @@ class WhatsAppWorker(QThread):
         chats = sorted({img.get("chat") or "?" for img in images})
         marks = "".join(sorted({img["react"] for img in images if img.get("react")}))
         self.log.emit(f"[{item.code}] {len(images)} photo(s) in: {', '.join(chats)}" + (f"  (reacted {marks})" if marks else ""))
+        files, failed = self._download(row, item, images)
+        if not files:
+            self.row_status.emit(row, "error", f"Found {len(images)}, download failed", "")
+            return "error", 0
+        return self._save(row, item, base, out_dir, files, failed, images)
+
+    def _download(self, row: int, item: CodeItem, images: list[dict]) -> tuple[list[tuple[bytes, str]], int]:
+        """The code's photos as (data, extension), the same picture only once; and how many failed."""
         files: list[tuple[bytes, str]] = []
         hashes: set[str] = set()
         failed = 0
@@ -357,10 +367,10 @@ class WhatsAppWorker(QThread):
                 continue  # same picture posted/forwarded twice
             hashes.add(digest)
             files.append((data, ext_for(res.get("mimetype"), data, res.get("filename"))))
+        return files, failed
 
-        if not files:
-            self.row_status.emit(row, "error", f"Found {len(images)}, download failed", "")
-            return "error", 0
+    def _save(self, row: int, item: CodeItem, base: str, out_dir: Path, files: list[tuple[bytes, str]],
+              failed: int, images: list[dict]) -> tuple[str, int]:
         path = save_images(out_dir, base, files)
         text = f"Saved {len(files)} image" + ("s" if len(files) > 1 else "")
         if failed:
@@ -368,6 +378,9 @@ class WhatsAppWorker(QThread):
         self.row_status.emit(row, "ok", text, str(path))
         self.log.emit(f"[{item.code}] {text} → {path}")
         return "ok", len(files)
+
+    def _existing(self, out_dir: Path, base: str) -> Path | None:
+        return existing_output(out_dir, base)
 
     # ---- errors --------------------------------------------------------------------
     def _fail(self, message: str):

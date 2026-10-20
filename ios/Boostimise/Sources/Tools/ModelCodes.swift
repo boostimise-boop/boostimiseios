@@ -2,8 +2,8 @@ import Foundation
 
 /// Product codes in chat text and the codes list / result file (tools/model_detect/codes.py).
 enum ProductCodes {
-    // 5a-403, 5A-403, 5a - 403, 5a_403, 5a:403 ... and the codes typed in a chat: Core/ProductCode.swift
-    static let codeRx = ProductCode.codeRx
+    // 5a-403, 5A-403, 5a - 403, 5a_403, 5a:403 ... and the codes typed in a chat, in the shop's code style
+    // (Core/ProductCode.swift); "" is the prefix of codes without one (#1023)
     static let notDone: Set<String> = ["", "not found", "no image", "unknown"]
 
     static func norm(_ prefix: String, _ number: String) -> String { ProductCode.norm(prefix, number) }
@@ -42,6 +42,7 @@ enum ProductCodes {
         var blockOrder: [String] = []                // prefixes in order
         var blocks: [String: [String]] = [:]         // prefix -> codes in order
         var label: [String: String] = [:]            // code -> spelling in the list
+        private let codeRx = ProductCode.reader().codeRx
 
         init(_ text: String) {
             for raw in text.lines() {

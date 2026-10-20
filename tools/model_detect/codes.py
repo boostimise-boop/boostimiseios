@@ -2,8 +2,10 @@
 and read/write the result file ("5a-403 samsung a70")."""
 import os
 
-# 5a-403, 5A-403, 5a - 403, 5a_403, 5a:403 ... and the codes typed in a chat ("2-151-152"): core/codes.py
-from core.codes import CODE_RE, code_matches, codes_in_text, norm, split_code  # noqa: F401
+# 5a-403, 5A-403, 5a - 403, 5a_403, 5a:403 ... and the codes typed in a chat ("2-151-152"), in the shop's
+# code style: core/codes.py
+from core import codes
+from core.codes import code_matches, codes_in_text, norm, split_code  # noqa: F401
 
 # Results that mean "not identified yet" (these codes are searched again on the next run)
 NOT_DONE = {"", "not found", "no image", "unknown"}
@@ -29,12 +31,13 @@ class CodeList:
     def __init__(self, path):
         self.path = path
         self.lines = []   # (raw line, code or None)
-        self.blocks = {}  # prefix -> [codes in file order]
+        self.blocks = {}  # prefix -> [codes in file order] ("" for codes without a prefix, like #1023)
         self.label = {}   # code -> spelling used in the file
+        code_re = codes.reader().code_re
         with open(path, encoding="utf-8-sig", errors="replace") as f:
             for raw in f.read().splitlines():
                 s = raw.strip()
-                m = CODE_RE.match(s) if s else None
+                m = code_re.match(s) if s else None
                 if not m or m.start() != 0:
                     self.lines.append((raw.rstrip(), None))
                     continue
@@ -58,10 +61,11 @@ def read_results(path):
     res = {}
     if not path or not os.path.exists(path):
         return res
+    code_re = codes.reader().code_re
     with open(path, encoding="utf-8-sig", errors="replace") as f:
         for raw in f.read().splitlines():
             s = raw.strip()
-            m = CODE_RE.match(s)
+            m = code_re.match(s)
             if m and m.start() == 0:
                 res[norm(m.group(1), m.group(2))] = s[m.end():].strip()
     return res

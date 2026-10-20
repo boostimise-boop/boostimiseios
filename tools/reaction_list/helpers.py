@@ -1,4 +1,4 @@
-"""Pure helpers: the reaction choices, the codes a message is about, and the list that is
+"""Pure helpers: the reaction buttons, the codes a message is about, and the list that is
 copied or saved."""
 from __future__ import annotations
 
@@ -7,19 +7,56 @@ import unicodedata
 from dataclasses import dataclass, field
 
 from core import codes as product_codes
-from tools.pathao_autofill.order_parser import find_codes, normalize_code
+from tools.pathao_autofill.order_parser import find_codes
 
-# (settings key, button text, emojis looked for, tooltip). 😢 is WhatsApp's built-in "sad"
-# reaction, so it counts as 😥. The "custom" choice looks for the emojis typed next to it.
+# The buttons come from the shop settings (core/shop.py): one per reaction, "All" and "Custom".
+# 😢 is WhatsApp's built-in "sad" reaction, so it counts as 😥. The "custom" choice looks for the
+# emojis typed next to it.
 CUSTOM = "custom"
-CHOICES = [
-    ("x", "❌", ("❌",), "Codes reacted with ❌"),
-    ("nophone", "📵", ("📵",), "Codes reacted with 📵"),
-    ("sad", "😥", ("😥", "😢"), "Codes reacted with 😥 (or 😢, WhatsApp's built-in sad reaction)"),
-    ("all", "❌ 📵 😥", ("❌", "📵", "😥", "😢"), "Codes reacted with any of ❌ 📵 😥 (or 😢)"),
-    (CUSTOM, "Custom", (), "Codes reacted with the emojis you type in the box next to it"),
-]
-DEFAULT_CHOICE = "all"
+ALL = "all"
+DEFAULT_CHOICE = ALL
+OLD_KEYS = {"x": "❌", "nophone": "📵", "sad": "😥"}  # the saved choice up to 4.4
+ALIASES = {"😥": ("😢",)}
+
+
+def with_aliases(emojis) -> tuple[str, ...]:
+    """The emojis looked for: each one, and right after it the reactions that count as it (😥 → 😢)."""
+    out: list[str] = []
+    for e in emojis:
+        for x in (e, *ALIASES.get(e, ())):
+            if x not in out:
+                out.append(x)
+    return tuple(out)
+
+
+def make_choices(reactions: list[dict]) -> list[tuple]:
+    """(settings key, button text, emojis looked for, tooltip) for the shop's reactions, then All and Custom."""
+    out = []
+    for r in reactions:
+        e, label = r["emoji"], r.get("label") or ""
+        tip = f"Codes reacted with {e}" + (f" - {label}" if label else "")
+        if e in ALIASES:
+            tip += f" (or {' '.join(ALIASES[e])}, WhatsApp's built-in reaction)"
+        out.append((e, e, with_aliases([e]), tip))
+    if len(reactions) > 1:
+        es = [r["emoji"] for r in reactions]
+        out.append((ALL, " ".join(es), with_aliases(es), "Codes reacted with any of " + " ".join(es)))
+    out.append((CUSTOM, "Custom", (), "Codes reacted with the emojis you type in the box next to it"))
+    return out
+
+
+def choice_key(saved: str) -> str:
+    return OLD_KEYS.get(saved, saved)
+
+
+def reaction_labels(reactions: list[dict]) -> dict[str, str]:
+    """{"❌": "Cancelled", ...}, also for the reactions that count as one of them (😢 as 😥)."""
+    labels = {}
+    for r in reactions:
+        if r.get("label"):
+            for e in with_aliases([r["emoji"]]):
+                labels.setdefault(e, r["label"])
+    return labels
 
 # As wa_bridge_reactions.js reads reactions: '❤️' and '❤', '👍🏻' and '👍' are the same reaction.
 _EMOJI_MARKS = re.compile("[︎️\U0001F3FB-\U0001F3FF]")
@@ -29,8 +66,6 @@ _BN_DIGITS = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
 # A date such as 16-10-2026 or 2026-10-16 is not a code.
 _DATE = re.compile(r"(?<![0-9A-Za-z])(?:(?:[12]?\d|3[01])[-/.](?:0?[1-9]|1[0-2])[-/.](?:\d{4}|\d{2})"
                    r"|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})(?![0-9A-Za-z])")
-# One code of a list: "2-558", "2:558+", "5A_380" ...
-_CODE = re.compile(r"\s*(" + product_codes.PREFIX + r")\s*" + product_codes.SEP + r"\s*(\d{1,6})[\s+\-]*", re.I)
 # A message naming more codes is a list or summary: its reactions are not about one code.
 MAX_CODES = 3
 
@@ -69,16 +104,13 @@ def split_emojis(text: str) -> list[str]:
 
 def custom_reactions(text: str) -> tuple[str, ...]:
     """The emojis typed for the custom choice; 😥 also brings 😢, as the 😥 button does."""
-    emojis = split_emojis(text)
-    if "😥" in emojis and "😢" not in emojis:
-        emojis.insert(emojis.index("😥") + 1, "😢")
-    return tuple(emojis)
+    return with_aliases(split_emojis(text))
 
 
 def normalize(code: str) -> str:
-    """'2-558', '2 - 558', '2:558+', '5A-380' -> '2-558', '5a-380', as order_parser writes codes."""
-    m = _CODE.fullmatch(code or "")
-    return normalize_code(*m.groups()) if m else (code or "").strip().lower()
+    """'2-558', '2 - 558', '2:558+', '5A-380' -> '2-558', '5a-380'; 'CC1023' -> 'cc-1023'; '#1023' -> '1023'
+    (the shop's code style, as order_parser writes codes)."""
+    return product_codes.normalize(code)
 
 
 def message_codes(text: str) -> list[str]:
@@ -90,12 +122,8 @@ def message_codes(text: str) -> list[str]:
 
 
 def code_sort_key(code: str):
-    """2-558 < 2-560 < 3-12 < 5a-380."""
-    m = _CODE.fullmatch(code or "")
-    if not m:
-        return (10**6, code, 0)
-    prefix = re.match(r"(\d+)(.*)", m.group(1))
-    return (int(prefix.group(1)), prefix.group(2).lower(), int(m.group(2)))
+    """2-558 < 2-560 < 3-12 < 5a-380 (in the shop's code style)."""
+    return product_codes.reader().sort_key(code)
 
 
 @dataclass
@@ -122,15 +150,19 @@ class Found:
             self.chats.append(chat)
         self.t = max(self.t, int(hit.get("t") or 0))
 
-    def react(self, wanted: tuple[str, ...]) -> str:
-        """The reactions found, in the order of the choice ('❌📵')."""
-        return "".join(e for e in wanted if e in self.emojis)
+    def react(self, wanted: tuple[str, ...], labels: dict[str, str] | None = None) -> str:
+        """The reactions found, in the order of the choice: '❌📵', or with what they mean in the
+        shop settings '❌ Cancelled, 📵 Phone off'."""
+        found = [e for e in wanted if e in self.emojis]
+        if not labels or not any(labels.get(e) for e in found):
+            return "".join(found)
+        return ", ".join(f"{e} {labels[e]}" if labels.get(e) else e for e in found)
 
 
-def format_list(rows: list[Found], wanted: tuple[str, ...]) -> str:
-    """'1. 2-558 Realme C85 ❌ 01734484040', one code per line."""
+def format_list(rows: list[Found], wanted: tuple[str, ...], labels: dict[str, str] | None = None) -> str:
+    """'1. 2-558 Realme C85 ❌ 01734484040' (or '❌ Cancelled' with a label), one code per line."""
     lines = []
     for n, f in enumerate(rows, 1):
-        parts = [f.code, f.name, f.react(wanted), ", ".join(f.phones)]
+        parts = [f.code, f.name, f.react(wanted, labels), ", ".join(f.phones)]
         lines.append(f"{n}. " + " ".join(p for p in parts if p))
     return "\n".join(lines) + ("\n" if lines else "")

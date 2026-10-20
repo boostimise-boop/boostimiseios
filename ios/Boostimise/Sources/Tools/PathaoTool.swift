@@ -28,15 +28,6 @@ final class PathaoTool {
     private static let restartDrop = 40   // a prefix starting its codes again (6-980 -> 6-47..6-1) drops at least this much...
     private static let restartRatio = 3   // ...to at most a third of the numbers before
 
-    static let defaultChats: [(String, String)] = [
-        ("2", "Free Cover BD(2-)"),
-        ("3", "Cover Print BD 0.1 (3-)"),
-        ("4", "Customise Cover BD (4-)"),
-        ("4a", "Customise Cover BD(4a-)"),
-        ("5", "Misty Cover House 3.0 (5-)"),
-        ("5a", "Misty Cover House (5a-)"),
-        ("6", "Customise Phone Case (6-)"),
-    ]
     static let pathaoURL = URL(string: "https://merchant.pathao.com/")!
 
     // key -> (placeholder, which match, label shown above the box)
@@ -74,12 +65,12 @@ const __find = (spec) => {
 """#
 
     // The orders created from `from` to `to` (YYYY-MM-DD), read from the API behind the merchant panel's
-    // Orders page with the panel's own login (the result waits in window.__ccbdOrders). Archived orders
+    // Orders page with the panel's own login (the result waits in window.__bmOrders). Archived orders
     // are left out, like on that page, and so are return orders (RC...): they carry the merchant as
     // recipient, and the delivery they return may be older.
     private static let jsPathaoOrders = #"""
 (function (from, to) {
-  window.__ccbdOrders = {pending: true};
+  window.__bmOrders = {pending: true};
   (async () => {
     let token = '';
     try { token = JSON.parse(localStorage.getItem('pathaoMerchant:auth') || '{}').token || ''; } catch (e) {}
@@ -104,16 +95,16 @@ const __find = (spec) => {
       if (!d.last_page || page >= d.last_page) break;
     }
     return {orders: orders};
-  })().then(r => { window.__ccbdOrders = r; }, e => { window.__ccbdOrders = {error: String(e)}; });
+  })().then(r => { window.__bmOrders = r; }, e => { window.__bmOrders = {error: String(e)}; });
 })("__FROM__", "__TO__");
 """#
 
     // Remembers when Save was clicked, and every POST/PUT answer.
     static let jsHooks = #"""
-if (!window.__ccbdHooked) {
-  window.__ccbdHooked = true;
+if (!window.__bmHooked) {
+  window.__bmHooked = true;
   const mark = (on) => {
-    try { on ? sessionStorage.setItem('__ccbdSave', String(Date.now())) : sessionStorage.removeItem('__ccbdSave'); } catch (e) {}
+    try { on ? sessionStorage.setItem('__bmSave', String(Date.now())) : sessionStorage.removeItem('__bmSave'); } catch (e) {}
   };
   document.addEventListener('click', (e) => {
     let el = e.target;
@@ -128,9 +119,9 @@ if (!window.__ccbdHooked) {
   document.addEventListener('submit', () => mark(true), true);
   const note = (start, status, method) => {
     try {
-      const a = JSON.parse(sessionStorage.getItem('__ccbdResp') || '[]');
+      const a = JSON.parse(sessionStorage.getItem('__bmResp') || '[]');
       a.push([start, status, method]);
-      sessionStorage.setItem('__ccbdResp', JSON.stringify(a.slice(-40)));
+      sessionStorage.setItem('__bmResp', JSON.stringify(a.slice(-40)));
     } catch (e) {}
   };
   const of = window.fetch;
@@ -210,30 +201,29 @@ if (!window.__ccbdHooked) {
         lookbackDays = p.int("lookback_days", 30)
         writePhone = p.bool("write_phone_to_list", true)
         startFromBottom = p.bool("start_from_bottom", true)
-        var names = Self.defaultChats
-        if let saved = JSONTools.parse(p.string("chat_names")) as? JSON {
-            for (k, v) in saved.sorted(by: { $0.key < $1.key }) {
-                let n = (v as? String) ?? ""
-                if let i = names.firstIndex(where: { $0.0 == k }) { names[i].1 = n } else { names.append((k, n)) }
-            }
-        }
-        chatNames = names.map { ChatName(prefix: $0.0, name: $0.1) }
+        chatNames = Self.shopChatNames()
     }
 
+    /// The chat of each code prefix, kept in the shop settings (Core/Shop.swift).
+    private static func shopChatNames() -> [ChatName] {
+        Shop.shared.chats.sorted { $0.key < $1.key }.map { ChatName(prefix: $0.key, name: $0.value) }
+    }
+
+    /// Shows the shop's chats again (they may have been changed in Shop settings or another app).
+    func loadChatNames() { chatNames = Self.shopChatNames() }
+
     func saveSettings() {
-        var m = JSON()
+        var m: [String: String] = [:]
         for c in chatNames { m[c.prefix] = c.name }
+        Shop.shared.save(chats: m)
         prefs.set("lookback_days", lookbackDays)
         prefs.set("write_phone_to_list", writePhone)
         prefs.set("start_from_bottom", startFromBottom)
-        prefs.set("chat_names", JSONTools.string(m))
         cache.removeAll()
         readPrefixes.removeAll()
     }
 
-    private func chatFor(_ prefix: String) -> String {
-        (chatNames.first { $0.prefix == prefix }?.name ?? "\(prefix)-").trimmed
-    }
+    private func chatFor(_ prefix: String) -> String { Shop.shared.chatFor(prefix) }
 
     private func savedCodes() -> Set<String> { prefs.stringSet("saved_codes") }
 
@@ -316,8 +306,8 @@ if (!window.__ccbdHooked) {
     if (t && t.length <= 300 && /success|created|placed|সফল/i.test(t) && __vis(el)) toasts.push(t);
   });
   let click = 0, resp = [];
-  try { click = parseInt(sessionStorage.getItem('__ccbdSave') || '0', 10) || 0; } catch (e) {}
-  try { resp = JSON.parse(sessionStorage.getItem('__ccbdResp') || '[]'); } catch (e) {}
+  try { click = parseInt(sessionStorage.getItem('__bmSave') || '0', 10) || 0; } catch (e) {}
+  try { resp = JSON.parse(sessionStorage.getItem('__bmResp') || '[]'); } catch (e) {}
   return JSON.stringify({url: location.href, docStart: performance.timeOrigin, click, form: oid !== null,
           orderId: oid, phone: val('phone'), address: val('address'), toasts, resp});
 """# + "})(" + specs + ")"
@@ -399,7 +389,7 @@ if (!window.__ccbdHooked) {
     }
 
     private func arm() async {
-        _ = await eval("(function(){try{sessionStorage.removeItem('__ccbdSave');}catch(e){}})()")
+        _ = await eval("(function(){try{sessionStorage.removeItem('__bmSave');}catch(e){}})()")
         let st = await pageState() ?? [:]
         baselineToasts = Set(st.strs("toasts"))
         fillURL = st.str("url")
@@ -581,7 +571,7 @@ if (!window.__ccbdHooked) {
         while Date() < end {
             try Task.checkCancellation()
             try await Task.sleep(nanoseconds: 1_000_000_000)
-            let text = await eval("JSON.stringify(window.__ccbdOrders || null)") as? String
+            let text = await eval("JSON.stringify(window.__bmOrders || null)") as? String
             guard let res = JSONTools.parse(text) as? JSON else {
                 throw NeedUser("The Pathao page changed while its orders were read. Tap Check Pathao again.")
             }

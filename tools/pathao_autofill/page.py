@@ -1,6 +1,6 @@
 """
-Cover Canvas BD - WhatsApp -> Pathao auto-fill
-==============================================
+WhatsApp -> Pathao auto-fill
+============================
 
 Loads a list of order codes (6-830, 5a-380, ...), finds each code's order message in
 WhatsApp Web (prefix "6" -> chat "6-", "5a" -> chat "5a-", ...) and fills Pathao's
@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from core import shell, theme
+from core import shell, shop, theme
 from core.ui import FlowLayout
 
 from .autofill_engine import (
@@ -67,6 +67,9 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.settings = load_settings()
+        self.shop = shop.get()
+        self.settings["chat_names"] = self.shop.chats()  # shared with the other apps (Shop settings)
+        self.settings["orders_chat"] = self.shop.settings.get("orders_chat") or ""
         self.cmd_q, self.evt_q = queue.Queue(), queue.Queue()
         self.worker = Worker(self.cmd_q, self.evt_q, copy.deepcopy(self.settings))
         self.worker.start()
@@ -77,6 +80,7 @@ class MainWindow(QMainWindow):
 
         self.push_timer = QTimer(self, singleShot=True, interval=600)
         self.push_timer.timeout.connect(self.push_settings)
+        self.shop.changed.connect(self._on_shop_changed)
 
         self.setStyleSheet(STYLE)
         self._build()
@@ -87,7 +91,7 @@ class MainWindow(QMainWindow):
 
     # -- layout ------------------------------------------------------------
     def _build(self):
-        self.setWindowTitle("Cover Canvas BD - WhatsApp to Pathao auto-fill")
+        self.setWindowTitle("WhatsApp to Pathao auto-fill")
         self.setMinimumSize(320, 260)
         # Rows of controls wrap onto more lines as the window narrows; when even that doesn't fit,
         # the scroll area scrolls instead of cutting the window off.
@@ -322,11 +326,27 @@ class MainWindow(QMainWindow):
                 names[p] = name
             else:
                 names.pop(p, None)
+        self.shop.set_chats(names)
         self.settings["list_file"] = self.path_edit.text().strip()
         self.settings["start_from_bottom"] = self.bottom_check.isChecked()
         self.settings["always_on_top"] = self.top_check.isChecked()
         self.settings["write_phone_to_list"] = self.phone_check.isChecked()
         save_settings(self.settings)
+        self.send("settings", copy.deepcopy(self.settings))
+
+    def _on_shop_changed(self):
+        """Chat names changed in Shop settings or in another Boostimise app."""
+        names, orders_chat = self.shop.chats(), self.shop.settings.get("orders_chat") or ""
+        if names == self.settings.get("chat_names") and orders_chat == self.settings.get("orders_chat"):
+            return
+        self.settings["chat_names"], self.settings["orders_chat"] = names, orders_chat
+        for p, edit in self.chat_edits.items():
+            want = names.get(p) or f"{p}-"
+            if edit.text().strip() != want and not edit.hasFocus():
+                edit.blockSignals(True)
+                edit.setText(want)
+                edit.blockSignals(False)
+                self._fit_to_text(edit)
         self.send("settings", copy.deepcopy(self.settings))
 
     def browse(self):

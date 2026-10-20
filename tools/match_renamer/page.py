@@ -17,16 +17,17 @@ from PySide6.QtWidgets import (
     QTextEdit, QVBoxLayout, QWidget,
 )
 
-from core import theme
+from core import shop, theme
 
-from .engine import APP_TITLE, DATA_DIR, LOG_DIR, SETTINGS_FILE, Worker, list_folder, list_groups, parse_products
+from .engine import (APP_TITLE, DATA_DIR, LOG_DIR, SETTINGS_FILE, Worker, group_label, list_folder, list_groups,
+                     parse_products)
 
 HELP = [
     "How to use",
     "1. Choose the product list (.txt) and the day folder with the photos (e.g. 24.09.26). Each list "
     "uses its own folder in it: the 6- list the folder \"6-\", the 5a- list the folder \"5a-\" and so on.",
     "2. Press \"Open WhatsApp\" (the first time, scan the QR code with your phone). It looks for the chat "
-    "of each list, e.g. \"Customise Phone Case (6-)\" for the 6- list. Check the chats, or choose / type "
+    "of each list, e.g. \"My Shop (6-)\" for the 6- list. Check the chats, or choose / type "
     "them yourself, and untick the lists you don't want now.",
     "3. Press \"Start\". Lists are done from the bottom of the file upward (6-, then 5a-, 5- …). Each "
     "list's chat is searched from the newest message up to the first code of that list (e.g. 6-830), the "
@@ -47,6 +48,15 @@ QLabel#step {{ font-weight: 600; color: {theme.TEXT}; }}
 QLabel#hint {{ color: {theme.TEXT_2}; }}
 QLabel#warn {{ color: {theme.WARNING}; }}
 """
+
+
+def shop_chat(group: str) -> str:
+    """The chat the shop settings give a list ("6-"), or the orders chat for the codes without a
+    prefix; "" when the shop settings have none (core/shop.py)."""
+    s = shop.get().settings
+    if not group:
+        return (s.get("orders_chat") or "").strip()
+    return (s.get("chats") or {}).get(group[:-1], "").strip()
 
 
 def load_settings():
@@ -305,11 +315,11 @@ class RenamerPage(QWidget):
         for i, (g, ps) in enumerate(groups.items()):
             if g not in self.list_vars:
                 saved = self.saved_lists.get(g, {})
-                self.list_vars[g] = {"on": saved.get("on", True), "chat": saved.get("chat", "")}
+                self.list_vars[g] = {"on": saved.get("on", True), "chat": saved.get("chat", "") or shop_chat(g)}
             v = self.list_vars[g]
             row = i * 2 if narrow else i
             folder = list_folder(day, g) if day and os.path.isdir(day) else None
-            check = QCheckBox(f"{g} list")
+            check = QCheckBox(group_label(g))
             check.setChecked(v["on"])
             check.toggled.connect(lambda on, v=v: v.__setitem__("on", on))
             codes = QLabel(f"{len(ps)} codes, {ps[0].code} up to {ps[-1].code}", objectName="hint")
@@ -419,7 +429,7 @@ class RenamerPage(QWidget):
     # ---- buttons
     def _open_whatsapp(self):
         self._save_settings()
-        self.worker.submit(self.worker.job_open_whatsapp, list(self.groups))
+        self.worker.submit(self.worker.job_open_whatsapp, list(self.groups), {g: shop_chat(g) for g in self.groups})
 
     def _start(self):
         opts = self._options()
@@ -433,7 +443,7 @@ class RenamerPage(QWidget):
         if not on:
             QMessageBox.warning(self, APP_TITLE, "Tick at least one list.")
             return
-        no_chat = [l["group"] for l in on if not l["chat"]]
+        no_chat = [group_label(l["group"]) for l in on if not l["chat"]]
         if no_chat and len(on) > 1:
             QMessageBox.warning(self, APP_TITLE, "Choose the WhatsApp chat for these lists: " + ", ".join(no_chat) +
                                 '\n\n(Press "Open WhatsApp" to fill them in, or untick them.)')

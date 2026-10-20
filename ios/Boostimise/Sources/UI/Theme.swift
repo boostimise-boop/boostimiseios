@@ -41,7 +41,7 @@ final class Nav {
     static let shared = Nav()
 
     enum Screen: CaseIterable, Identifiable {
-        case enhancer, fetchCode, reactionList, modelDetect, pathao, whatsapp, dashboard, plans
+        case enhancer, fetchCode, reactionList, modelDetect, pathao, whatsapp, dashboard, plans, shop
 
         var id: Self { self }
 
@@ -55,6 +55,7 @@ final class Nav {
             case .whatsapp: return "WhatsApp"
             case .dashboard: return "Dashboard"
             case .plans: return "Plans"
+            case .shop: return "Shop settings"
             }
         }
 
@@ -68,6 +69,7 @@ final class Nav {
             case .whatsapp: return "bubble.left.and.bubble.right"
             case .dashboard: return "square.grid.2x2"
             case .plans: return "crown"
+            case .shop: return "storefront"
             }
         }
 

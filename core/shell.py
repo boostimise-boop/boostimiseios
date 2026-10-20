@@ -389,7 +389,8 @@ class MainWindow(QMainWindow):
     def _account_menu(self, chip: QWidget):
         menu = account_menu(self, [("sparkles", "Enhance photos", lambda: self.open_tool("photo_enhancer")),
                                    ("layout-dashboard", "Dashboard", lambda: self.open_tool("dashboard")),
-                                   ("crown", "Plans", lambda: self.open_tool("plans"))], self.sign_out)
+                                   ("crown", "Plans", lambda: self.open_tool("plans")),
+                                   ("store", "Shop settings", lambda: self.open_tool("shop"))], self.sign_out)
         hint = menu.sizeHint()
         menu.exec(chip.mapToGlobal(QPoint(8, -hint.height() + 4)))
 

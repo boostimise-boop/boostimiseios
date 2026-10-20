@@ -1,4 +1,4 @@
-# Boostimise – all-in-one tools for Cover Canvas BD
+# Boostimise – all-in-one tools for WhatsApp sellers
 
 <img src="assets/logo-full.png" width="220" align="right" alt="Boostimise logo">
 
@@ -10,8 +10,9 @@ called **CasePilot**, and up to 2.1 **CoverDesk**; updating keeps all settings a
 |---|---|---|
 | **Photo Enhancer** | AI photo enhancer and upscaler (2× / 4×, face and photo restoration), the same as [boostimise.com](https://boostimise.com): drop, pick or paste photos, compare before / after, download PNG, JPG or all as ZIP. | new (the website's enhancer) |
 | **Fetch by Code** | Finds product photos in your WhatsApp chats by code and saves them (`2-558 Realme C85.jpg`). | `fetchbyrandomcode` (PixFetch) |
+| **Fetch & Enhance** | Give it only the code list: each code's photos are found in WhatsApp (like Fetch by Code), only the **photos of people** are kept (phones, screenshots … are never saved), they are enhanced **4×** (like the Photo Enhancer, from your daily enhancements), then **Rename by Match** runs on them by itself: each list's chat is searched and the enhanced photos are renamed `2-226 Realme P3 Ultra.jpg`, or put in a folder `2-221 Oppo a6 pro 5g` as img1.jpg, img2.jpg … (*Undo last rename* on its page undoes it). | new |
 | **Fetch by Date** | Saves every photo sent in one chat between two dates and times (to the second), one folder per day, with a CSV log; photos saved before are skipped. | `wpimagefetch` (WhatsApp Image Fetcher) |
-| **Reaction List** | Lists the codes reacted with ❌, 📵, 😥 (pick one or all three) or the emojis you type under *Custom*, with the phone number from the order message; *List + photos* also saves their reacted photos. | new (replaces Fetch by Reaction, `fetchimagesbyicon`) |
+| **Reaction List** | Lists the codes reacted with one of your shop's reactions (❌, 📵, 😥 until you change them in *Shop settings*; pick one or all) or the emojis you type under *Custom*, with what each reaction means, with the phone number from the order message; *List + photos* also saves their reacted photos. | new (replaces Fetch by Reaction, `fetchimagesbyicon`) |
 | **Model Detect** | Finds each code's photos in WhatsApp and writes the phone model next to the code. | `mobilemodeldetect` |
 | **Rename by Match** | Renames the photos in a day folder by matching them with the photos posted in WhatsApp. | `photorenamebymatch` (PhotoMatch Renamer) |
 | **Pathao Auto-fill** | Reads order messages in WhatsApp and fills Pathao's New Delivery form. | `dataentry` |
@@ -19,6 +20,7 @@ called **CasePilot**, and up to 2.1 **CoverDesk**; updating keeps all settings a
 | **SnapRename** | Browse a folder's photos, rename them, drag them into sub-folders. | `photosrename` |
 | **Dashboard** | Your enhancements today / this week / this month, per-day chart, plan and history - updates live. | new (the website's dashboard) |
 | **Plans** | The free account and the paid plans; request a plan (an admin activates it). | new (the website's pricing) |
+| **Shop settings** | Your shop's reactions and what each one means (e.g. ❌ *Cancelled*), and the WhatsApp chat of each code list. Saved in your Boostimise account, so the website and the Android and iPhone apps use the same; signed out, saved on this PC. | new |
 
 **Sign in with Google once, for every tool.** Boostimise opens on a *Sign in to Boostimise* screen;
 *Continue with Google* opens your browser's Google account picker and comes back to the app by
@@ -36,7 +38,7 @@ only one tab, so two tools can't scroll it at the same moment: the second one sa
 finish with WhatsApp* and goes on by itself. (Fetch by Code reads WhatsApp without
 scrolling, so it never waits; nor does Reaction List. Fetch by Date clicks through the photos, so it waits.)
 
-Shortcuts: **Ctrl+1 … Ctrl+9** switch tools (Ctrl+1 is the Photo Enhancer, Ctrl+2 Fetch by Code …). The « button at the bottom of the sidebar makes it narrow.
+Shortcuts: **Ctrl+1 … Ctrl+9** switch tools (Ctrl+1 is the Photo Enhancer, Ctrl+2 Fetch by Code, Ctrl+3 Fetch & Enhance …). The « button at the bottom of the sidebar makes it narrow.
 
 **Any screen size.** The window fits small laptops (1024×600, 1366×768, also at 125 % / 150 % display
 scaling) up to big monitors: the sidebar folds to icons by itself when the window is narrower than
@@ -94,6 +96,7 @@ started with `run.bat`.
 
 | Tool | Settings and history |
 |---|---|
+| Shop settings | `<data>\shop` (`shop.json`, this PC's copy of the account's shop settings) |
 | Boostimise sign-in | `<data>\account` (`session.bin`, encrypted for your Windows user; delete it to sign out) |
 | Photo Enhancer | `<data>\photo_enhancer` (where downloads are saved, pasted images while they are in the list) |
 | WhatsApp + Pathao login (all tools) | `<data>\browser` (the shared Edge window's profile) |

@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
-from core import whatsapp
+from core import shop, whatsapp
 from core.paths import data_dir
 from core.ui import FlowLayout
 
@@ -34,7 +34,7 @@ from .wa_driver import StopRequested, WhatsAppDriver, build_groups
 APP_DIR = str(data_dir("model_detect"))  # settings and log (WhatsApp: the shared window, core/whatsapp.py)
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 LOG_PATH = os.path.join(APP_DIR, "mobilemodeldetect.log")
-DEFAULT_CODES = r"C:\covercanvasbd\productcodes.txt"
+DEFAULT_CODES = os.path.join(os.path.expanduser("~"), "Documents", "productcodes.txt")
 
 MODE_BELOW = "below"
 MODE_ABOVE = "above"
@@ -69,6 +69,15 @@ ENGINE_HINTS = {
 COL_CODE, COL_MODEL, COL_CONF, COL_PHOTOS, COL_CHAT, COL_NOTE = range(6)
 STACK_BELOW = 720  # page width (px) under which the chat list goes above the settings
 MAP_USE, MAP_PREFIX, MAP_COUNT, MAP_RANGE, MAP_CHAT = range(5)
+
+
+def shop_chat(prefix: str) -> str:
+    """The chat the shop settings give a code group, or the orders chat for the codes without a prefix;
+    "" when the shop settings have none (core/shop.py)."""
+    s = shop.get().settings
+    if not prefix:
+        return (s.get("orders_chat") or "").strip()
+    return (s.get("chats") or {}).get(prefix, "").strip()
 
 
 # =============================================================================== worker
@@ -756,7 +765,9 @@ class MainWindow(QMainWindow):
         matched = 0
         for r, prefix in enumerate(self.map_rows):
             pat = re.compile(rf"(?<![0-9a-z]){re.escape(prefix)}(?![0-9a-z])", re.I)
-            hits = [c for c in options if pat.search(c)]
+            given = shop_chat(prefix).lower()  # the chat the shop settings give this group
+            hits = ([c for c in options if c.strip().lower() == given] if given
+                    else [c for c in options if prefix and pat.search(c)])
             if hits:
                 self.map_table.cellWidget(r, MAP_CHAT).setCurrentText(hits[0])
                 matched += 1
@@ -821,7 +832,7 @@ class MainWindow(QMainWindow):
             use.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
             use.setCheckState(Qt.CheckState.Checked if enabled.get(prefix, True) else Qt.CheckState.Unchecked)
             self.map_table.setItem(r, MAP_USE, use)
-            for col, text in ((MAP_PREFIX, prefix), (MAP_COUNT, str(len(codes))),
+            for col, text in ((MAP_PREFIX, prefix or "Orders"), (MAP_COUNT, str(len(codes))),
                               (MAP_RANGE, f"{codes[-1]}  ->  {codes[0]}")):
                 it = QTableWidgetItem(text)
                 it.setFlags(Qt.ItemFlag.ItemIsEnabled)
@@ -829,7 +840,7 @@ class MainWindow(QMainWindow):
             combo = QComboBox()
             combo.setEditable(True)
             combo.addItems([""] + options)
-            combo.setCurrentText(mapping.get(prefix, ""))
+            combo.setCurrentText(mapping.get(prefix, "") or shop_chat(prefix))
             combo.lineEdit().setPlaceholderText("choose or type the chat name")
             self.map_table.setCellWidget(r, MAP_CHAT, combo)
 
@@ -936,7 +947,7 @@ class MainWindow(QMainWindow):
                 continue
             chat = self.map_table.cellWidget(r, MAP_CHAT).currentText().strip()
             if not chat:
-                QMessageBox.warning(self, "Start", f"Choose a WhatsApp chat for code group '{prefix}' "
+                QMessageBox.warning(self, "Start", f"Choose a WhatsApp chat for code group '{prefix or 'Orders'}' "
                                                    f"(or untick it).")
                 return
             codes = self.codelist.blocks[prefix]

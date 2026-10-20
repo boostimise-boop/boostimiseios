@@ -1,5 +1,5 @@
 @echo off
-rem Boostimise - all-in-one tools for Cover Canvas BD.
+rem Boostimise - all-in-one tools for WhatsApp sellers.
 rem The first run sets up a private Python environment (.venv) with everything the tools need.
 cd /d "%~dp0"
 

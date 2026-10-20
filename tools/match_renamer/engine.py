@@ -22,6 +22,7 @@ import time
 import traceback
 from collections import defaultdict
 from dataclasses import dataclass, field
+from functools import lru_cache
 from datetime import datetime
 from pathlib import Path
 
@@ -39,18 +40,28 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".jfif"}
 GIVE_UP_MARGIN = 20   # stop looking for 6-847 once only codes <= 6-827 are being loaded
 SCROLL_STEP = 0.75    # scroll up 75% of the chat's height per step, so every message is seen
 
-# A product code: "6-852", "4a-75", "5A - 380", "6:852" ... in the product list
-CODE_PATTERN = product_codes.CODE
-CODE_RE = product_codes.CODE_RE
-# The code as it is typed in WhatsApp (JavaScript, flags "gm"): "3-163", "3:163+", "3-163+164",
-# "2-151-152", "2+152-2+153" ... (core/codes.py). Group 3 is the rest of the list, read item by item with
-# WA_MORE_PATTERN after "__P__" in it is replaced by the code's prefix.
-WA_CODE_PATTERN = product_codes.JS_CHAT_CODE
-WA_MORE_PATTERN = product_codes.JS_MORE_ITEM
+# Product codes are read in the shop's code style (core/codes.py): "6-852", "4a-75", "5A - 380", "6:852" ...
+# or "CC1023", "#1023". A list ("group") is the codes of one prefix, "6-" / "4a-" / "cc-"; the codes
+# without a prefix (#1023, Order 1023) are one list, "".
 # File/folder names that already start with a code were renamed before -> never rename them again
 DONE_RE = re.compile(r"^(\d{1,2}[A-Za-z]?)\s*-\s*(\d{1,5})(?!\d)")
 # Sub folders for one list, e.g. "6-" or "5a-"
 GROUP_DIR_RE = re.compile(r"^\d{1,2}[A-Za-z]?\s*-$")
+NEVER_RE = re.compile(r"(?!)")
+
+
+def done_re(reader=None):
+    """Names starting with a code (group 1 prefix, 2 number): "6-852 Nubia a56", "CC1023 …", "#1023 …"."""
+    r = reader or product_codes.reader()
+    return DONE_RE if r.kind == "prefix" else re.compile(r.js_any_code, re.I)
+
+
+def group_dir_re(reader=None):
+    """Sub folders for one list: "6-" or "5a-"; "CC" or "CC-" in the letters style; none for #1023."""
+    r = reader or product_codes.reader()
+    if r.kind == "letters":
+        return re.compile(r"^(?:" + "|".join(r.prefixes()) + r")\s*-?$", re.I)
+    return GROUP_DIR_RE if r.kind == "prefix" else NEVER_RE
 
 
 class StopRequested(Exception):
@@ -66,8 +77,18 @@ class Product:
     group: str   # the list it belongs to, e.g. "6-" / "4a-"
 
 
-def norm_code(prefix, number):
-    return f"{prefix.lower()}-{int(number)}"
+norm_code = product_codes.norm
+split_code = product_codes.split_code
+
+
+def group_of(prefix):
+    """The list of a code's prefix: "6-", "cc-"; "" for codes without a prefix."""
+    return f"{prefix.lower()}-" if prefix else ""
+
+
+def group_label(group):
+    """"6- list", or "Orders list" for the codes without a prefix."""
+    return f"{group} list" if group else "Orders list"
 
 
 def list_groups(products):
@@ -82,30 +103,31 @@ def list_folder(root, group):
     """The folder with the photos of one list: in the day folder "24.09.26" the 6- list uses
     the sub folder "6-". None if the day folder has list folders but not this one."""
     root = Path(root)
-    same = lambda name: re.sub(r"\s+", "", name).lower() == group
+    if not group:
+        return root      # the codes without a prefix are one list: no list folders
+    names = {group} if group[0].isdigit() else {group, group[:-1]}  # "cc-" is in "CC-" or "CC"
+    same = lambda name: re.sub(r"\s+", "", name).lower() in names
     if same(root.name):
         return root
+    dir_re = group_dir_re()
     try:
-        subs = [d for d in root.iterdir() if d.is_dir() and GROUP_DIR_RE.match(d.name)]
+        subs = [d for d in root.iterdir() if d.is_dir() and dir_re.match(d.name)]
     except OSError:
         return None
     for d in subs:
         if same(d.name):
             return d
-    if subs or GROUP_DIR_RE.match(root.name):
+    if subs or dir_re.match(root.name):
         return None
     return root          # a plain folder without list folders: used for every list
 
 
 def group_in_name(group, name):
-    """True if a chat name is for this list, e.g. "Customise Phone Case (6-)" for "6-"."""
+    """True if a chat name is for this list, e.g. "My Shop (6-)" for "6-"."""
+    if not group:
+        return False     # the orders chat comes from the shop settings
     pattern = r"(?<![0-9A-Za-z])" + re.escape(group[:-1]) + r"\s*-(?!\s*\d)"
     return re.search(pattern, name or "", re.IGNORECASE) is not None
-
-
-def split_code(code):
-    group, number = code.rsplit("-", 1)
-    return group, int(number)
 
 
 def read_text(path):
@@ -120,19 +142,19 @@ def read_text(path):
 
 def parse_products(path):
     """Return (products bottom line first, codes skipped because they have no name)."""
+    r = product_codes.reader()
     products, skipped = [], []
     for line in read_text(path).splitlines():
         line = line.strip()
-        m = CODE_RE.match(line)
+        m = r.code_re.match(line)
         if not m:
             continue
         name = line[m.end():].strip()
-        code_text = f"{m.group(1)}-{m.group(2)}"
+        code_text = r.written(m.group(1), m.group(2))
         if not any(ch.isalnum() for ch in name):   # "4-337 ......" = no product name
             skipped.append(code_text)
             continue
-        products.append(Product(norm_code(m.group(1), m.group(2)), f"{code_text} {name}",
-                                f"{m.group(1).lower()}-"))
+        products.append(Product(norm_code(m.group(1), m.group(2)), f"{code_text} {name}", group_of(m.group(1))))
     products.reverse()
     unique, seen = [], set()
     for p in products:
@@ -242,10 +264,10 @@ class LocalPhoto:
 # (#main, [data-id] message rows, .selectable-text, .quoted-mention, blob: images).
 JS_HELPERS = r"""
 () => {
-  if (window.__prbm && window.__prbm.v === 6) return true;
-  const CODE = new RegExp(__CODE__, 'gm');
+  if (window.__prbm && window.__prbm.v === __V__) return true;
+  const CODE = new RegExp(__CODE__, 'gim');
   const MORE = __MORE__;
-  const P = { v: 6 };
+  const P = { v: __V__ };
   const inside = (el, boxes) => boxes.some((b) => b.contains(el));
   const scrollable = (e) => {
     const o = getComputedStyle(e).overflowY;
@@ -401,10 +423,10 @@ JS_HELPERS = r"""
     const text = P.text(n, boxes);
     const codes = [];
     for (const m of text.matchAll(CODE)) {
-      const group = m[1].toLowerCase() + '-';
-      codes.push(group + parseInt(m[2], 10));
+      const key = (n) => (m[1] ? m[1].toLowerCase() + '-' : '') + parseInt(n, 10);  // as codes.norm
+      codes.push(key(m[2]));
       const more = new RegExp(MORE.split('__P__').join(m[1]), 'gi');
-      for (const x of m[3].matchAll(more)) codes.push(group + parseInt(x[1], 10));
+      for (const x of m[3].matchAll(more)) codes.push(key(x[1]));
     }
     const imgs = P.images(n, boxes);
     const r = n.getBoundingClientRect();
@@ -552,7 +574,21 @@ JS_HELPERS = r"""
   window.__prbm = P;
   return true;
 }
-""".replace("__CODE__", json.dumps(WA_CODE_PATTERN)).replace("__MORE__", json.dumps(WA_MORE_PATTERN))
+"""
+
+
+@lru_cache(maxsize=4)
+def _helpers_for(style_key):
+    r = product_codes.Reader(json.loads(style_key))
+    return (JS_HELPERS.replace("__CODE__", json.dumps(r.js_chat_code)).replace("__MORE__", json.dumps(r.js_more_item))
+            .replace("__V__", json.dumps(f"7 {style_key}")))
+
+
+def js_helpers(reader=None):
+    """JS_HELPERS reading the codes of the shop's style (core/codes.py: the reader's js_chat_code, whose
+    group 3 is the rest of a list like "+164-165", read item by item with js_more_item)."""
+    r = reader or product_codes.reader()
+    return _helpers_for(json.dumps(r.style, sort_keys=True))
 
 
 @dataclass
@@ -779,7 +815,7 @@ class WhatsAppWeb:
 
     def js(self, name, *args):
         return self.page.evaluate(
-            f"(a) => {{ ({JS_HELPERS})(); return window.__prbm.{name}(...a); }}", list(args))
+            f"(a) => {{ ({js_helpers()})(); return window.__prbm.{name}(...a); }}", list(args))
 
     def safe_js(self, name, *args, default=None):
         try:
@@ -1161,32 +1197,40 @@ class Worker(threading.Thread):
         self.wa.close()
 
     # ---- jobs
-    def job_open_whatsapp(self, groups):
-        """Open WhatsApp and find the chat of each list ("Customise Phone Case (6-)" for 6-)."""
+    def job_open_whatsapp(self, groups, shop_chats=None):
+        """Open WhatsApp and find the chat of each list: the one the shop settings give it
+        (`shop_chats`, {group: chat name}), or else the one named for it ("My Shop (6-)" for 6-)."""
         self.wa.open()
         self.wa.wait_logged_in()
         if not groups:
             self.log("WhatsApp is ready. Choose the product list, then press Start.", "ok")
             return
+        shop_chats = shop_chats or {}
         with self.wa.turn():
             self.status("Looking for the chat of each list…")
             names = self.wa.chat_names()
             found = {}
             for g in groups:
-                hit = next((n for n in names if group_in_name(g, n)), None)
-                if hit is None:
-                    more = self.wa.search_chats(g)
+                want = (shop_chats.get(g) or "").strip().lower()
+                same = lambda n: want and n.strip().lower() == want
+                hit = next((n for n in names if same(n) or (not want and group_in_name(g, n))), None)
+                if hit is None and (want or g):
+                    more = self.wa.search_chats(shop_chats.get(g) or g)
                     names += [n for n in more if n not in names]
-                    hit = next((n for n in more if group_in_name(g, n)), None)
+                    hit = next((n for n in more if same(n) or (not want and group_in_name(g, n))), None)
                 if hit:
                     found[g] = hit
         self.ui.put(("chats", (names, found)))
         self.log("Chats for the lists:", "head")
         for g in groups:
             if g in found:
-                self.log(f"  {g} list  →  {found[g]}", "ok")
+                self.log(f"  {group_label(g)}  →  {found[g]}", "ok")
+            elif shop_chats.get(g):
+                self.log(f"  {group_label(g)}  →  no chat \"{shop_chats[g]}\" (Shop settings), please choose it", "warn")
+            elif g:
+                self.log(f"  {group_label(g)}  →  no chat with \"{g}\" in its name, please choose it", "warn")
             else:
-                self.log(f"  {g} list  →  no chat with \"{g}\" in its name, please choose it", "warn")
+                self.log(f"  {group_label(g)}  →  set your orders chat in Shop settings, or choose it", "warn")
         self.log("Check the chats (you can change them), then press Start.")
 
     def job_run(self, opts):
@@ -1202,7 +1246,7 @@ class Worker(threading.Thread):
         total = sum(len(groups[l["group"]]) for l in lists)
         self.log("")
         self.log(f"{total} product codes in {len(lists)} list(s): "
-                 f"{', '.join(l['group'] for l in lists)} (bottom list first)", "head")
+                 f"{', '.join(l['group'] or 'Orders' for l in lists)} (bottom list first)", "head")
         if skipped:
             self.log(f"Skipped (no product name): {', '.join(skipped)}")
 
@@ -1213,7 +1257,7 @@ class Worker(threading.Thread):
             self.check_stop()
             ps = groups[l["group"]]
             self.log("")
-            self.log(f"── {l['group']} list: {len(ps)} codes, from {ps[0].code} up to {ps[-1].code} ──", "head")
+            self.log(f"── {group_label(l['group'])}: {len(ps)} codes, from {ps[0].code} up to {ps[-1].code} ──", "head")
             folder = list_folder(root, l["group"])
             if folder is None:
                 self.log(f'No folder "{l["group"]}" in {root}, so this list is skipped.', "warn")
@@ -1243,17 +1287,18 @@ class Worker(threading.Thread):
 
     def scan_folder(self, root, folder, recursive):
         """Photos of one list's folder (plus the folders earlier runs made, like "6-840 …")."""
+        done = done_re()
         if recursive:
             files = list(folder.rglob("*"))
         else:
             files = list(folder.iterdir())
-            files += [p for d in list(files) if d.is_dir() and DONE_RE.match(d.name) for p in d.iterdir()]
+            files += [p for d in list(files) if d.is_dir() and done.match(d.name) for p in d.iterdir()]
         entries = []
         for p in files:
             if not (p.is_file() and p.suffix.lower() in IMAGE_EXTS):
                 continue
             parts = [p.stem] + list(reversed(p.relative_to(folder).parts[:-1]))
-            m = next((DONE_RE.match(x) for x in parts if DONE_RE.match(x)), None)
+            m = next((done.match(x) for x in parts if done.match(x)), None)
             entries.append((p, norm_code(m.group(1), m.group(2)) if m else ""))
         entries.sort(key=lambda e: str(e[0]).lower())
         done = sum(1 for _, c in entries if c)
@@ -1356,7 +1401,7 @@ class Worker(threading.Thread):
         """Where a photo's new name goes: its folder, or the one above when that is already a
         code's folder ("6-840 …/img1.jpg", copied for a second code)."""
         parent = ph.path.parent
-        return parent.parent if ph.done_code and DONE_RE.match(parent.name) else parent
+        return parent.parent if ph.done_code and done_re().match(parent.name) else parent
 
     def apply_names(self, product, base, chosen, renamer, previews, rel, total):
         """One photo: "2-226 Realme P3 Ultra.jpg". Several (total, with the ones already named):
@@ -1408,7 +1453,7 @@ class Worker(threading.Thread):
 
     def report_lines(self, group, scan, code_lines):
         rows = scan.store.rows()
-        lines = ["", f"=== {group} list - chat \"{self.wa.chat_title}\"",
+        lines = ["", f"=== {group_label(group)} - chat \"{self.wa.chat_title}\"",
                  f"Messages checked: {len(rows)} (with a photo: {sum(1 for r in rows if r['n'])}, "
                  f"photo not loaded: {sum(1 for r in rows if r['media'] and not r['n'])})",
                  f"Search ended: {scan.end_reason}",

@@ -8,6 +8,7 @@ on:
     paths:
       - "ios/**"
       - "android/app/src/main/assets/**"
+      - "core/code_samples.json"
       - ".github/workflows/ios.yml"
   workflow_dispatch:
 
@@ -17,6 +18,15 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+
+      # The code reader (Core/ProductCode.swift) against the samples every Boostimise app is checked with
+      - name: Check the code reader
+        working-directory: ios
+        run: |
+          mkdir -p build
+          swiftc -o build/check-codes Boostimise/Sources/Core/Regex.swift Boostimise/Sources/Core/Codes.swift \
+            Boostimise/Sources/Core/JSON.swift Boostimise/Sources/Core/ProductCode.swift CodeSamplesCheck/*.swift
+          build/check-codes ../core/code_samples.json
 
       - name: Install XcodeGen
         run: brew install xcodegen

@@ -117,7 +117,7 @@ struct FetchScreen: View {
     }
 }
 
-/// One chat picker per list in the code list, filled in from chat names ("Customise Phone Case (6-)").
+/// One chat picker per list in the code list, filled in from chat names ("My Shop (6-)").
 private struct ListChats: View {
     let t: FetchTool
 
@@ -150,12 +150,12 @@ struct ReactionListScreen: View {
             WaBanner()
             Card(title: "Reaction") {
                 Flow {
-                    ForEach(CHOICES, id: \.self) { c in Chip(label: c.label, selected: c == t.choice) { t.choice = c } }
+                    ForEach(t.choices, id: \.self) { c in Chip(label: c.label, selected: c.key == t.choice.key) { t.choiceKey = c.key } }
                 }
                 LabeledField(label: "Custom reactions", text: $t.customText, placeholder: "Type your emojis, e.g. 👍 ❤️ 🔥")
                     .disabled(t.running)
                     .onChange(of: t.customText) { _, _ in
-                        if let c = CHOICES.first(where: { $0.key == CUSTOM }), !t.customText.trimmed.isEmpty { t.choice = c }
+                        if !t.customText.trimmed.isEmpty { t.choiceKey = CUSTOM }
                     }
                 Hint("😥 also counts 😢 (WhatsApp's built-in sad reaction). Skin tones count as one reaction (👍🏻 = 👍).")
             }
@@ -190,7 +190,7 @@ struct ReactionListScreen: View {
                     }
                     ForEach(Array(t.results.enumerated()), id: \.element.id) { n, f in
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("\(n + 1). \(f.code) \(f.name) \(f.react(t.shown))").font(.system(size: 15, weight: .medium))
+                            Text("\(n + 1). \(f.code) \(f.name) \(f.react(t.shown, t.labels))").font(.system(size: 15, weight: .medium))
                                 .foregroundStyle(Brand.navy)
                             if !f.phones.isEmpty { Text(f.phones.joined(separator: ", ")).font(.system(size: 13)) }
                             Text(f.chats.joined(separator: ", ")).font(.system(size: 12)).foregroundStyle(Brand.muted)

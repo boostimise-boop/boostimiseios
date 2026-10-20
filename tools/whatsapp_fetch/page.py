@@ -189,7 +189,7 @@ class MainWindow(QMainWindow):
         self.date_check.toggled.connect(self._parse_timer.start)
         self.skip_check = QCheckBox("Skip codes that are already saved")
 
-        form = QFormLayout(set_box)
+        form = self.settings_form = QFormLayout(set_box)
         form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
         form.addRow("Save to", out_row)
         form.addRow("Search in", chat_row)
@@ -356,7 +356,7 @@ class MainWindow(QMainWindow):
         for r, it in enumerate(self.items):
             for c, text in enumerate([it.code, it.name, it.date, "", ""]):
                 self.table.setItem(r, c, QTableWidgetItem(text))
-            prev = existing_output(out_dir, it.base_name(include_date)) if out_dir.is_dir() else None
+            prev = self._existing(out_dir, it.base_name(include_date)) if out_dir.is_dir() else None
             if prev:
                 self._set_row(r, "skipped", "Saved earlier", str(prev))
         self.count_label.setText(f"{len(self.items)} code(s)")
@@ -485,6 +485,7 @@ class MainWindow(QMainWindow):
             "gap_minutes": self.gap_spin.value(),
             "lookback_days": self.lookback_spin.value(),
             "chat": chat,
+            **self._extra_options(),
         }
         self._save_settings()
         self.job_running = True
@@ -515,7 +516,7 @@ class MainWindow(QMainWindow):
             self._connect()
 
     def _connect(self):
-        self.worker = WhatsAppWorker("basic")
+        self.worker = self._new_worker()
         self.worker.log.connect(self._log)
         self.worker.state_changed.connect(self._on_state)
         self.worker.chats_loaded.connect(self._on_chats)
@@ -526,6 +527,16 @@ class MainWindow(QMainWindow):
         self.worker.finished.connect(self._on_worker_finished)
         self.worker.start()
         self._update_buttons()
+
+    # ---- what a tool built on this page changes ----------------------------------
+    def _new_worker(self) -> WhatsAppWorker:
+        return WhatsAppWorker("basic")
+
+    def _extra_options(self) -> dict:
+        return {}
+
+    def _existing(self, out_dir: Path, base: str) -> Path | None:
+        return existing_output(out_dir, base)
 
     # ---- worker callbacks ------------------------------------------------------
     def _on_state(self, state: str, message: str):

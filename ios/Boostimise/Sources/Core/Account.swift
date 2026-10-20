@@ -458,6 +458,7 @@ final class Account {
         } else {
             state = .ready
         }
+        if state == .ready && !offline { Shop.shared.onAccountReady() }
     }
 
     func setQuota(_ q: Quota?) {
@@ -475,9 +476,11 @@ final class Account {
             jsonOf(("event", "*"), ("schema", "public"), ("table", "profiles"), ("filter", "id=eq.\(uid)")),
             jsonOf(("event", "*"), ("schema", "public"), ("table", "subscriptions"), ("filter", "user_id=eq.\(uid)")),
             jsonOf(("event", "*"), ("schema", "public"), ("table", "enhancements"), ("filter", "user_id=eq.\(uid)")),
+            jsonOf(("event", "*"), ("schema", "public"), ("table", "shop_profiles"), ("filter", "user_id=eq.\(uid)")),
         ]
-        let ch = RealtimeChannel(name: "account:\(uid)", changes: changes, onChange: { [weak self] _ in
+        let ch = RealtimeChannel(name: "account:\(uid)", changes: changes, onChange: { [weak self] table in
             guard let self else { return }
+            if table == "shop_profiles" { Shop.shared.sync() }
             self.liveTick += 1
             AppGuard.shared.soon()  // releases / access changed in the admin panel ping app_settings
             self.reloadJob?.cancel()

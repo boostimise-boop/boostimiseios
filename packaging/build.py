@@ -1,5 +1,6 @@
 """Builds the Boostimise installer:  dist\\Boostimise-Setup-<version>.exe
 
+  0. python -m core.codes_check                         (the code readers against core/code_samples.json)
   1. assets/logo.png -> assets/icon.ico                 (make_icon.py)
   2. PyInstaller     -> dist/Boostimise/Boostimise.exe  (Boostimise.spec: the exe + everything it needs)
   3. Boostimise.exe --selftest                          (every tool opens, every library loads)
@@ -106,6 +107,9 @@ def main():
     info = app_info()
     name, version = info["name"], info["version"]
     print(f"Building {name} {version} ({info['publisher']})")
+
+    step("Code readers")
+    run([sys.executable, "-m", "core.codes_check"], cwd=ROOT)
 
     step("Icon")
     sys.path.insert(0, str(HERE))

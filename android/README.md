@@ -7,12 +7,13 @@ plans and dashboard as boostimise.com, and the same WhatsApp tools.
 |---|---|
 | **Photo Enhancer** | Pick photos (or *Share → Boostimise* from WhatsApp / the gallery), Enhance, compare before / after, download PNG / JPG or all as ZIP. Saved in *Pictures/Boostimise/Enhanced*. |
 | **Fetch by Code** | Finds each code's photos in your WhatsApp chats and saves them as `2-558 Realme C85.jpg` in *Pictures/Boostimise/Fetch by Code*. With *A chat for each list* the 6- codes are searched only in the 6- list's chat ("Customise Phone Case (6-)"), the 5a- codes in the 5a- chat …, filled in from chat names and changeable. |
-| **Reaction List** | The codes reacted with ❌, 📵, 😥 or the emojis you type under *Custom*, with the phone number from the order message. *Copy list* / *Save .txt*. *Fetch: List + photos* also saves their reacted photos as `2-558 Realme C85.jpg` in *Pictures/Boostimise/Reaction List*. |
+| **Reaction List** | The codes reacted with your shop's reactions (❌, 📵, 😥 until you change them in *Shop settings*, with what each one means) or the emojis you type under *Custom*, with the phone number from the order message. *Copy list* / *Save .txt*. *Fetch: List + photos* also saves their reacted photos as `2-558 Realme C85.jpg` in *Pictures/Boostimise/Reaction List*. |
 | **Rename by Match** | Paste the product list ("6-852 Nubia a56"), choose the photo folder once (Android's folder picker; a folder with list folders "6-", "5a-" uses each list's own). Each code is found in WhatsApp, its photos are compared with the folder's photos (same hashes as the Windows app, so resized / recompressed copies still match) and the matching photo is renamed `6-852 Nubia a56.jpg`; several photos go in a folder `6-852 Nubia a56` as `img1.jpg`, `img2.jpg`. Photos already named with a code are renamed again unless they already have the list's name (as on Windows and the website). *Preview only* changes nothing; *Undo last rename* puts the old names back. |
 | **Model Detect** | Finds each code's photos and writes the phone model next to the code: names written in the chat, text printed in the photos (read on the phone), or Claude (your API key). |
 | **Pathao Auto-fill** | Reads the order message of each code and fills Pathao's New Delivery form (merchant.pathao.com, inside the app). You check it and tap Save; the next code fills itself. **Check Pathao** marks the codes of the list that already have a Pathao order (the code is its Merchant Order ID, counting only the prefix's current round of codes) and writes each one's phone next to it in the list. |
 | **WhatsApp** | The one WhatsApp Web every tool uses. |
 | **Dashboard / Plans** | As on the website. |
+| **Shop settings** | Your reactions and what they mean, and the WhatsApp chat of each code list. Kept in your Boostimise account, so the website and the Windows app use the same (Core/Shop). |
 
 ## Linking WhatsApp (once)
 

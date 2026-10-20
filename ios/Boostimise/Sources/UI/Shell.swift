@@ -60,6 +60,7 @@ struct ShellView: View {
         case .pathao: PathaoScreen()
         case .dashboard: DashboardScreen()
         case .plans: PlansScreen()
+        case .shop: ShopScreen()
         case .whatsapp: EmptyView()
         }
     }

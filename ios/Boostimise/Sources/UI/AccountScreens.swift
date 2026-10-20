@@ -79,7 +79,7 @@ struct BlockedScreen: View {
         let acc = Account.shared
         Centered {
             Card(title: "Account suspended",
-                 hint: "Your Boostimise account has been suspended. Contact Cover Canvas BD if you think this is a mistake.") {
+                 hint: "Your Boostimise account has been suspended. Contact Boostimise support if you think this is a mistake.") {
                 PrimaryButton("Check again") { acc.refresh() }
                 LinkButton("Sign out") { acc.signOut() }
             }

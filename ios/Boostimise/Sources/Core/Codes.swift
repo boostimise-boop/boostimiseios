@@ -39,14 +39,15 @@ enum Codes {
     static let imageExts = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".bmp"]
     private static let dateRx = Rx(#"(?:^|\s)(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\s*$"#)
 
+    /// Lines like '2-558<TAB>Realme C85<TAB>26/9' (tabs or spaces), in the shop's code style.
     static func parseCodeList(_ text: String) -> [CodeItem] {
+        let r = ProductCode.reader()
         var items: [CodeItem] = []
         for raw in text.lines() {
             let line = raw.trimmed
             if line.isEmpty { continue }
-            let first = line.replacingFirst("\t", with: " ")
-            let code = ProductCode.listCode(first.before(" "))
-            var rest = first.contains(" ") ? first.after(" ") : ""
+            let (code, listed) = r.splitListLine(line)
+            var rest = listed
             if !code.hasDigit { continue }
             rest = squeezeSpaces(rest.replacingOccurrences(of: "\t", with: " ")).trimmed
             var date = ""

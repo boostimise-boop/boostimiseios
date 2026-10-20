@@ -7,13 +7,23 @@ enum OrderParser {
     private static let bnLetters = #"\x{0980}-\x{0982}\x{0984}-\x{09ff}"#
     private static let sepChars = #"[:\x{0983}=\-\x{2013}\x{2014}.\x{0964}]"#
 
-    private static let listLine = Rx(#"^\s*("# + ProductCode.prefix + #")\s*"# + ProductCode.sep + #"\s*(\d{1,6})[\s+\-]*$"#,
-                                     ignoreCase: true)
-    // The code at the start of a line with the codes of its list after it ("3-163+164", "2-151-152", "2:152+2-153")
-    private static let codeLine = Rx(#"^\W*(?:(?:order|code|id|অর্ডার|কোড)\W*)?"# + ProductCode.chatCode, ignoreCase: true)
-    // Any code written with a dash, with the codes after it, so its numbers are not read as the amount
-    private static let codeAny = Rx(#"(?<!\w)"# + ProductCode.chatCode.replacingFirst(ProductCode.sep, with: ProductCode.dash),
-                                    ignoreCase: true)
+    // Codes are read in the shop's code style (ProductCode.reader()). Any code written with a dash, with the
+    // codes after it, so its numbers are not read as the amount (any code, in the other styles).
+    private static let codeAnyPrefix = Rx(#"(?<!\w)"# + ProductCode.chatCode.replacingFirst(ProductCode.sep, with: ProductCode.dash),
+                                          ignoreCase: true)
+    private static let codeAnyLock = NSLock()
+    private static var codeAnyOf: (ProductCode.Reader, Rx)?
+
+    private static func codeAny() -> Rx {
+        let r = ProductCode.reader()
+        if r.kind == "prefix" { return codeAnyPrefix }
+        codeAnyLock.lock()
+        defer { codeAnyLock.unlock() }
+        if let cached = codeAnyOf, cached.0 === r { return cached.1 }
+        let rx = Rx(r.chatCode, ignoreCase: true)
+        codeAnyOf = (r, rx)
+        return rx
+    }
     static let phone = Rx(#"(?<!\d)(?:\+?88[ -]?)?(0?1[3-9](?:[ -]?\d){8})(?!\d)"#)
     private static let nameLabel = Rx(
         #"^(?:customer|receiver|recipient|কাস্টমার|গ্রাহক|প্রাপক)?(?:'s|’s|er|ের)?\s*"# +
@@ -68,11 +78,13 @@ enum OrderParser {
 
     /// Codes of a list file, in file order, without duplicates or blank lines.
     static func readCodeList(_ text: String) -> [String] {
+        let r = ProductCode.reader()
         var seen: [String] = []
         var set = Set<String>()
         for line in text.components(separatedBy: "\n") {
-            guard let m = listLine.find(bnToAscii(line.trimEnd("\r"))) else { continue }
-            let c = normalizeCode(m.group(1), m.group(2))
+            let l = line.trimEnd("\r")
+            guard r.codeParts(l) != nil else { continue }   // a line holding just a code
+            let c = r.normalize(l)
             if set.insert(c).inserted { seen.append(c) }
         }
         return seen
@@ -80,13 +92,14 @@ enum OrderParser {
 
     /// Marks a code as done in the list text the way it is done by hand: "3-620<TAB>  01814120910".
     static func writePhoneToList(_ text: String, code: String, phone: String) -> String? {
+        let r = ProductCode.reader()
         var lines = text.components(separatedBy: "\n")
         var changed = false
         for i in lines.indices {
             let line = lines[i]
             let body = line.trimEnd("\r")
-            guard let m = listLine.find(bnToAscii(body)) else { continue }
-            if normalizeCode(m.group(1), m.group(2)) == code {
+            guard r.codeParts(body) != nil else { continue }
+            if r.normalize(body) == code {
                 lines[i] = body.trimEnd() + "\t  " + phone + String(line.dropFirst(body.count))
                 changed = true
             }
@@ -105,13 +118,7 @@ enum OrderParser {
     }
 
     /// The order codes a message starts with: ["6-872"], ["3-163", "3-164"] for "3-163+164" or "3-163-164", or [].
-    static func findCodes(_ text: String?) -> [String] {
-        for line in lines(text).prefix(3) {
-            guard let m = codeLine.find(line), m.start == 0 else { continue }
-            return ProductCode.matchCodes(m)
-        }
-        return []
-    }
+    static func findCodes(_ text: String?) -> [String] { ProductCode.orderCodes(text) }
 
     static func findPhones(_ text: String?) -> [String] {
         var phones: [String] = []
@@ -155,7 +162,7 @@ enum OrderParser {
 
     private static func numbers(_ line: String, alone: Bool = false) -> [Int] {
         var t = phone.replace(line, " ")
-        t = codeAny.replace(t, " ")
+        t = codeAny().replace(t, " ")
         t = tkGlued.replace(t) { $0.value + " " }
         var out: [Int] = []
         for m in (alone ? numberAlone : number).findAll(t) {
@@ -234,10 +241,11 @@ enum OrderParser {
 
     static func parseOrder(_ text: String?) -> Order {
         let lines = Self.lines(text)
+        let r = ProductCode.reader()
         var code = ""
         var codeLineIndex = -1
         for (i, line) in lines.prefix(3).enumerated() {
-            guard let m = codeLine.find(line), m.start == 0 else { continue }
+            guard let m = r.orderLine(line) else { continue }
             code = normalizeCode(m.group(1), m.group(3))
             codeLineIndex = i
             break

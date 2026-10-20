@@ -1,4 +1,4 @@
-"""Boostimise - all-in-one tools for Cover Canvas BD (called CasePilot up to version 3.0, CoverDesk up to 2.1).
+"""Boostimise - all-in-one tools for WhatsApp sellers (called CasePilot up to version 3.0, CoverDesk up to 2.1).
 
 One window with a sidebar; each button opens one of the tools (the AI Photo Enhancer, WhatsApp
 photo fetchers, model detect, rename by match, Pathao auto-fill, PhotoMatch, SnapRename, and the
@@ -23,7 +23,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from core import theme
 from core.paths import DATA_DIR
 
-INSTANCE_KEY = "CoverCanvasBD.AllInOne"
+INSTANCE_KEY = "Boostimise.AllInOne"
 
 
 def setup_logging():
@@ -114,6 +114,9 @@ def main():
     from core.shell import MainWindow  # after the theme, so pages pick up the palette
 
     win = MainWindow(selftest=selftest)
+    from core.code_style_widgets import follow_shop
+
+    follow_shop()  # the tools read codes in the shop's code style (core/codes.py)
     if selftest:
         from core import selftest as st
 

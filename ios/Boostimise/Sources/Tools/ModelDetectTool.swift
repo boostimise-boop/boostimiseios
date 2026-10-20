@@ -185,11 +185,14 @@ final class ModelDetectTool {
     /// A chat whose name contains the group code ("(5a-)", "5a-") is matched by itself.
     func autoMatch(_ chats: [WaChat]) {
         for (p, _) in groups() where chatFor[p] == nil {
+            // the group's chat in the shop settings (the orders chat for codes without a prefix, like #1023)
+            let given = (p.isEmpty ? Shop.shared.get("orders_chat") as? String : Shop.shared.chats[p])?.trimmed ?? ""
             let remembered = prefs.stringOrNil("chat_\(p)")
             let dashRx = Rx("(?<![0-9a-z])" + Rx.escape(p) + "-")
-            let hit = chats.first { $0.title == remembered }
-                ?? chats.first { $0.title.lowercased().contains("(\(p)-)") }
-                ?? chats.first { dashRx.contains($0.title.lowercased()) }
+            let hit = chats.first(where: { !given.isEmpty && $0.title.trimmed.lowercased() == given.lowercased() })
+                ?? chats.first(where: { $0.title == remembered })
+                ?? chats.first(where: { !p.isEmpty && $0.title.lowercased().contains("(\(p)-)") })
+                ?? chats.first(where: { !p.isEmpty && dashRx.contains($0.title.lowercased()) })
             if let hit { chatFor[p] = hit }
         }
     }

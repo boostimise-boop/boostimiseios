@@ -5,15 +5,15 @@ plugins {
 }
 
 android {
-    namespace = "com.covercanvasbd.boostimise"
+    namespace = "com.boostimise.app"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.covercanvasbd.boostimise"
+        applicationId = "com.boostimise.app"
         minSdk = 29
         targetSdk = 35
-        versionCode = 14
-        versionName = "1.0.13"
+        versionCode = 15
+        versionName = "1.0.14"
     }
 
     buildTypes {
@@ -64,4 +64,13 @@ dependencies {
     implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
     // Model Detect's optional "ask Claude" (the user's own API key)
     implementation("com.anthropic:anthropic-java:2.34.0")
+
+    // ProductCodeTest: the code reader against core/code_samples.json (gradlew testDebugUnitTest)
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
+}
+
+// The tests read core/code_samples.json: a changed file runs them again.
+tasks.withType<Test>().configureEach {
+    inputs.file(rootProject.file("../core/code_samples.json")).withPathSensitivity(PathSensitivity.NONE)
 }

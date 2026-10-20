@@ -1,7 +1,8 @@
 import Foundation
 import Observation
 
-/// The reaction choices (tools/reaction_list/helpers.py). 😢 counts as 😥. Custom = the emojis typed for it.
+/// The reaction buttons (tools/reaction_list/helpers.py): one per reaction of the shop settings, All and
+/// Custom. 😢 counts as 😥. Custom = the emojis typed for it.
 struct Choice: Hashable {
     let key: String
     let label: String
@@ -9,14 +10,33 @@ struct Choice: Hashable {
 }
 
 let CUSTOM = "custom"
+let ALL = "all"
+private let oldKeys = ["x": "❌", "nophone": "📵", "sad": "😥"]  // the saved choice up to 4.4
+private let aliases = ["😥": ["😢"]]
 
-let CHOICES = [
-    Choice(key: "x", label: "❌", emojis: ["❌"]),
-    Choice(key: "nophone", label: "📵", emojis: ["📵"]),
-    Choice(key: "sad", label: "😥", emojis: ["😥", "😢"]),
-    Choice(key: "all", label: "❌ 📵 😥", emojis: ["❌", "📵", "😥", "😢"]),
-    Choice(key: CUSTOM, label: "Custom", emojis: []),
-]
+/// The emojis looked for: each one, and right after it the reactions that count as it (😥 → 😢).
+func withAliases(_ emojis: [String]) -> [String] {
+    var out: [String] = []
+    for e in emojis { for x in [e] + (aliases[e] ?? []) where !out.contains(x) { out.append(x) } }
+    return out
+}
+
+func makeChoices(_ reactions: [ShopReaction]) -> [Choice] {
+    var out = reactions.map { Choice(key: $0.emoji, label: $0.emoji, emojis: withAliases([$0.emoji])) }
+    if reactions.count > 1 {
+        out.append(Choice(key: ALL, label: reactions.map(\.emoji).joined(separator: " "),
+                          emojis: withAliases(reactions.map(\.emoji))))
+    }
+    out.append(Choice(key: CUSTOM, label: "Custom", emojis: []))
+    return out
+}
+
+/// ["❌": "Cancelled", …], also for the reactions that count as one of them (😢 as 😥).
+func reactionLabels(_ reactions: [ShopReaction]) -> [String: String] {
+    var out: [String: String] = [:]
+    for r in reactions where !r.label.isEmpty { for e in withAliases([r.emoji]) where out[e] == nil { out[e] = r.label } }
+    return out
+}
 
 enum ReactionEmojis {
     /// As wa_bridge_reactions.js reads reactions: '❤️' and '❤', '👍🏻' and '👍' are the same reaction.
@@ -39,9 +59,7 @@ enum ReactionEmojis {
 
     /// The emojis typed for Custom; 😥 also brings 😢, as the 😥 button does.
     static func custom(_ s: String) -> [String] {
-        var emojis = split(s)
-        if let i = emojis.firstIndex(of: "😥"), !emojis.contains("😢") { emojis.insert("😢", at: i + 1) }
-        return emojis
+        withAliases(split(s))
     }
 }
 
@@ -106,12 +124,24 @@ final class ReactionListTool {
             self.order = order
         }
 
-        func react(_ wanted: [String]) -> String { wanted.filter { emojis.contains($0) }.joined() }
+        /// '❌📵', or with what they mean in the shop settings '❌ Cancelled, 📵 Phone off'.
+        func react(_ wanted: [String], _ labels: [String: String] = [:]) -> String {
+            let found = wanted.filter { emojis.contains($0) }
+            if !found.contains(where: { !(labels[$0] ?? "").isEmpty }) { return found.joined() }
+            return found.map { e in (labels[e] ?? "").isEmpty ? e : "\(e) \(labels[e]!)" }.joined(separator: ", ")
+        }
     }
 
     @ObservationIgnored private let prefs = Storage.prefs("reaction_list")
     var codeText = ""
-    var choice: Choice
+    /// The buttons, from the shop settings (they change with them).
+    var choices: [Choice] { makeChoices(Shop.shared.reactions) }
+    var choiceKey: String
+    var choice: Choice {
+        let c = choices
+        return c.first { $0.key == choiceKey } ?? c.first { $0.key == ALL } ?? c[0]
+    }
+    var labels: [String: String] { reactionLabels(Shop.shared.reactions) }
     /// The emojis typed for the Custom choice ("👍 ❤️ 🔥").
     var customText: String
     /// The reactions of the last run, in the order they are shown.
@@ -132,8 +162,8 @@ final class ReactionListTool {
 
     init() {
         let p = Storage.prefs("reaction_list")
-        let key = p.string("choice", "all")
-        choice = CHOICES.first { $0.key == key } ?? CHOICES[3]
+        let key = p.string("choice", ALL)
+        choiceKey = oldKeys[key] ?? key
         customText = p.string("custom_reactions")
         lookbackDays = p.int("lookback_days", 10)
         chat = ChatFilter(id: p.string("chat_id"), title: p.string("chat_title"), groupsOnly: p.bool("groups_only", false))
@@ -145,7 +175,7 @@ final class ReactionListTool {
     func wanted() -> [String] { choice.key == CUSTOM ? ReactionEmojis.custom(customText) : choice.emojis }
 
     private func save() {
-        prefs.set("choice", choice.key)
+        prefs.set("choice", choiceKey)
         prefs.set("custom_reactions", customText.trimmed)
         prefs.set("lookback_days", lookbackDays)
         prefs.set("with_photos", withPhotos)
@@ -157,10 +187,10 @@ final class ReactionListTool {
 
     func stop() { job?.cancel() }
 
-    /// '1. 2-558 Realme C85 ❌ 01734484040', one code per line.
+    /// '1. 2-558 Realme C85 ❌ 01734484040' (or '❌ Cancelled' with a label), one code per line.
     func formatList() -> String {
         let lines = results.enumerated().map { n, f in
-            "\(n + 1). " + [f.code, f.name, f.react(shown), f.phones.joined(separator: ", ")].filter { !$0.isEmpty }
+            "\(n + 1). " + [f.code, f.name, f.react(shown, labels), f.phones.joined(separator: ", ")].filter { !$0.isEmpty }
                 .joined(separator: " ")
         }
         return lines.joined(separator: "\n") + (results.isEmpty ? "" : "\n")

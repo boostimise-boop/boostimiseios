@@ -15,7 +15,7 @@ import unicodedata
 import urllib.parse
 from datetime import datetime, timedelta
 
-from core import whatsapp
+from core import shop, whatsapp
 from core.paths import data_dir
 
 from .order_parser import find_codes, find_phones, parse_order, split_code, write_phone_to_list
@@ -27,20 +27,13 @@ SAVED_LOG = os.path.join(APP_DIR, "saved_codes.txt")
 LOG_FILE = os.path.join(APP_DIR, "autofill.log")
 
 DEFAULT_SETTINGS = {
-    "list_file": r"C:\covercanvasbd\productcodes.txt",
+    "list_file": os.path.join(os.path.expanduser("~"), "Documents", "productcodes.txt"),
     "start_from_bottom": True,
     "always_on_top": False,
     "write_phone_to_list": True,  # after a save, put the phone next to its code in the list file
-    # code prefix -> WhatsApp chat name (a prefix missing here uses the chat "<prefix>-")
-    "chat_names": {
-        "2": "Free Cover BD(2-)",
-        "3": "Cover Print BD 0.1 (3-)",
-        "4": "Customise Cover BD (4-)",
-        "4a": "Customise Cover BD(4a-)",
-        "5": "Misty Cover House 3.0 (5-)",
-        "5a": "Misty Cover House (5a-)",
-        "6": "Customise Phone Case (6-)",
-    },
+    # code prefix -> WhatsApp chat name; the page fills it from the shop settings (core/shop.py).
+    # A prefix missing here uses the chat "<prefix>-".
+    "chat_names": {},
     "pathao_url": "https://merchant.pathao.com/",
     "pathao_create_url": "",  # learned the first time the New Delivery form is found
     "max_scrolls": 400,  # how many screens to scroll up a WhatsApp chat looking for a code
@@ -101,10 +94,10 @@ const __find = (spec) => {
 
 # Remembers (in sessionStorage, so it survives a page change) when Save was clicked.
 _JS_SAVE_HOOK = r"""
-if (!window.__ccbdHooked) {
-  window.__ccbdHooked = true;
+if (!window.__bmHooked) {
+  window.__bmHooked = true;
   const mark = (on) => {
-    try { on ? sessionStorage.setItem('__ccbdSave', String(Date.now())) : sessionStorage.removeItem('__ccbdSave'); } catch (e) {}
+    try { on ? sessionStorage.setItem('__bmSave', String(Date.now())) : sessionStorage.removeItem('__bmSave'); } catch (e) {}
   };
   document.addEventListener('click', (e) => {
     let el = e.target;
@@ -129,16 +122,16 @@ JS_PATHAO_STATE = "(specs) => {" + _JS_FIND + _JS_SAVE_HOOK + r"""
     if (t && t.length <= 300 && /success|created|placed|সফল/i.test(t) && __vis(el)) toasts.push(t);
   });
   let click = 0;
-  try { click = parseInt(sessionStorage.getItem('__ccbdSave') || '0', 10) || 0; } catch (e) {}
+  try { click = parseInt(sessionStorage.getItem('__bmSave') || '0', 10) || 0; } catch (e) {}
   return {url: location.href, docStart: performance.timeOrigin, click, form: oid !== null,
           orderId: oid, phone: val('phone'), address: val('address'), toasts};
 }"""
 
 JS_MARK_FIELD = "(spec) => {" + _JS_FIND + r"""
-  document.querySelectorAll('[data-ccbd-field]').forEach(e => e.removeAttribute('data-ccbd-field'));
+  document.querySelectorAll('[data-bm-field]').forEach(e => e.removeAttribute('data-bm-field'));
   const el = __find(spec);
   if (!el) return false;
-  el.setAttribute('data-ccbd-field', '1');
+  el.setAttribute('data-bm-field', '1');
   return true;
 }"""
 
@@ -147,7 +140,7 @@ JS_FIELD_VALUE = "(spec) => {" + _JS_FIND + r"""
   return el ? (el.value || '') : null;
 }"""
 
-JS_CLEAR_SAVE_FLAG = "() => { try { sessionStorage.removeItem('__ccbdSave'); } catch (e) {} }"
+JS_CLEAR_SAVE_FLAG = "() => { try { sessionStorage.removeItem('__bmSave'); } catch (e) {} }"
 
 # The orders created from `from` to `to` (YYYY-MM-DD), read from the API behind the merchant panel's
 # Orders page with the panel's own login. Archived orders are left out, like on that page, and so are
@@ -216,7 +209,7 @@ JS_WA_READY = """() => !!document.querySelector('#pane-side, #side, [aria-label=
 JS_WA_HEADER = "() => { const h = document.querySelector('#main header'); return h ? h.innerText : ''; }"
 
 JS_WA_MARK_SEARCH = r"""() => {
-  document.querySelectorAll('[data-ccbd-search]').forEach(e => e.removeAttribute('data-ccbd-search'));
+  document.querySelectorAll('[data-bm-search]').forEach(e => e.removeAttribute('data-bm-search'));
   const vis = (el) => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
   const boxes = [...document.querySelectorAll('input, [contenteditable="true"]')]
     .filter(el => vis(el) && !el.closest('#main') && !el.closest('footer'));
@@ -226,21 +219,21 @@ JS_WA_MARK_SEARCH = r"""() => {
   const side = document.querySelector('#side');
   if (!box && side) box = boxes.find(el => side.contains(el));
   if (!box) return false;
-  box.setAttribute('data-ccbd-search', '1');
+  box.setAttribute('data-bm-search', '1');
   return true;
 }"""
 
 # Marks the search result whose title is the chat name, ignoring case, spaces, brackets and
-# emoji: "Customise Cover BD(4a-)" matches "Customise Cover BD (4a-)" but not "... (4-)".
+# emoji: "My Shop(4a-)" matches "My Shop (4a-)" but not "... (4-)".
 JS_WA_MARK_CHAT = r"""(name) => {
-  document.querySelectorAll('[data-ccbd-chat]').forEach(e => e.removeAttribute('data-ccbd-chat'));
+  document.querySelectorAll('[data-bm-chat]').forEach(e => e.removeAttribute('data-bm-chat'));
   const norm = (s) => (s || '').toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ').trim();
   const want = norm(name);
   const root = document.querySelector('#side') || document.querySelector('#pane-side') || document.body;
   const hit = [...root.querySelectorAll('span[title]')]
     .find(s => !s.closest('#main') && norm(s.getAttribute('title')) === want);
   if (!hit) return false;
-  hit.setAttribute('data-ccbd-chat', '1');
+  hit.setAttribute('data-bm-chat', '1');
   return true;
 }"""
 
@@ -253,7 +246,7 @@ JS_WA_MARK_CHAT = r"""(name) => {
 JS_WA_SCROLL = r"""(arg) => {
   const main = document.querySelector('#main');
   if (!main) return null;
-  let sc = main.querySelector('[data-ccbd-scroller]');
+  let sc = main.querySelector('[data-bm-scroller]');
   if (!sc) {
     for (const d of main.querySelectorAll('div')) {
       if (d.scrollHeight <= d.clientHeight + 20) continue;
@@ -263,7 +256,7 @@ JS_WA_SCROLL = r"""(arg) => {
       if (!sc || d.scrollHeight > sc.scrollHeight) sc = d;
     }
     if (!sc) return null;
-    sc.setAttribute('data-ccbd-scroller', '1');
+    sc.setAttribute('data-bm-scroller', '1');
   }
   const where = typeof arg === 'string' ? arg : (arg || {}).where;
   const id = typeof arg === 'string' ? null : (arg || {}).anchor;
@@ -293,10 +286,10 @@ JS_WA_SCROLL = r"""(arg) => {
 # style rule, so the mark survives WhatsApp redrawing the row). null removes the mark.
 # False when the message is not in the page.
 JS_WA_SHOW = r"""(id) => {
-  let st = document.getElementById('ccbd-mark');
+  let st = document.getElementById('bm-mark');
   if (!st) {
     st = document.createElement('style');
-    st.id = 'ccbd-mark';
+    st.id = 'bm-mark';
     document.head.appendChild(st);
   }
   if (!id) { st.textContent = ''; return true; }
@@ -325,7 +318,7 @@ JS_WA_OLDER = r"""() => {
 JS_WA_EXTRACT = r"""(prev) => {
   const main = document.querySelector('#main');
   if (!main) return {ok: false, messages: [], top: null};
-  const sc = main.querySelector('[data-ccbd-scroller]') || main;
+  const sc = main.querySelector('[data-bm-scroller]') || main;
   const box = sc.getBoundingClientRect();
   const rows = [...sc.querySelectorAll('[data-id]')];
   const drawn = (r) => !r.querySelector('[data-virtualized="true"]');
@@ -534,15 +527,15 @@ class Worker(threading.Thread):
         self.emit("row", item["code"], status, item.get("data"))
 
     def chat_for(self, prefix):
-        return (self.settings.get("chat_names", {}).get(prefix) or f"{prefix}-").strip()
+        return shop.chat_name(self.settings.get("chat_names", {}), self.settings.get("orders_chat", ""), prefix)
 
     # -- commands from the window ---------------------------------------
     def handle(self, cmd):
         kind = cmd[0]
         if kind == "settings":
-            old = self.settings.get("chat_names")
+            old = (self.settings.get("chat_names"), self.settings.get("orders_chat"))
             self.settings = cmd[1]
-            if old != self.settings.get("chat_names"):
+            if old != (self.settings.get("chat_names"), self.settings.get("orders_chat")):
                 self.cache.clear()
                 self.duplicates.clear()
                 self.scanned.clear()
@@ -834,10 +827,10 @@ class Worker(threading.Thread):
             return
         if not self._eval(wa, JS_WA_MARK_SEARCH):
             raise NeedUser("Could not find the WhatsApp search box. Is WhatsApp Web fully loaded?")
-        wa.locator('[data-ccbd-search="1"]').first.click(timeout=5000)
+        wa.locator('[data-bm-search="1"]').first.click(timeout=5000)
         wa.keyboard.press("Control+A")
         wa.keyboard.press("Backspace")
-        # Search with the words before "(": "Customise Cover BD (4-)" -> "Customise Cover BD".
+        # Search with the words before "(": "My Shop (4-)" -> "My Shop".
         # The exact chat is then picked from the results.
         wa.keyboard.type(chat.split("(")[0].strip() or chat, delay=60)
         end = time.time() + 12
@@ -847,7 +840,7 @@ class Worker(threading.Thread):
                 wa.wait_for_timeout(600)  # WhatsApp may still be redrawing the results
                 if self._eval(wa, JS_WA_MARK_CHAT, chat):
                     try:
-                        wa.locator('[data-ccbd-chat="1"]').first.click(timeout=2000)
+                        wa.locator('[data-bm-chat="1"]').first.click(timeout=2000)
                         break
                     except Exception:
                         pass  # the list was redrawn under the click; find the chat again
@@ -937,7 +930,7 @@ class Worker(threading.Thread):
                 return
             raise NeedUser(f"Could not find the '{FIELDS[key][2]}' box on the Pathao page. "
                            f"Open the New Delivery form and press Start.")
-        page.locator('[data-ccbd-field="1"]').first.fill(value or "", timeout=10000)
+        page.locator('[data-bm-field="1"]').first.fill(value or "", timeout=10000)
 
     def fill_pathao(self, idx, prepare=True):
         item = self.items[idx]
@@ -968,7 +961,7 @@ class Worker(threading.Thread):
                 self._set_field(page, key, value)
         if self._eval(page, JS_MARK_FIELD, self._spec("address")):
             try:
-                box = page.locator('[data-ccbd-field="1"]').first
+                box = page.locator('[data-bm-field="1"]').first
                 box.focus(timeout=3000)
                 box.press("End")  # a key press also wakes up Pathao's area suggestion, if it listens for keys
             except Exception:

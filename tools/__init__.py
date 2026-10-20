@@ -31,6 +31,9 @@ TOOLS = [
     Tool("fetch_by_code", "Fetch by Code", "WhatsApp", "image",
          "Find product photos in your WhatsApp chats by code and save them.",
          "tools.whatsapp_fetch.page:make_by_code"),
+    Tool("fetch_enhance", "Fetch & Enhance", "WhatsApp", "wand-sparkles",
+         "Give the code list: the photos of people are fetched from WhatsApp, enhanced 4× and named like Rename by Match.",
+         "tools.fetch_enhance.page:FetchEnhancePage"),
     Tool("fetch_by_date", "Fetch by Date", "WhatsApp", "calendar",
          "Save every photo sent in one chat between two dates and times.",
          "tools.fetch_by_date.page:FetchByDatePage"),
@@ -58,4 +61,7 @@ TOOLS = [
     Tool("plans", "Plans", "Account", "crown",
          "The free account and the paid plans; request a plan here.",
          "tools.account.plans:PlansPage"),
+    Tool("shop", "Shop settings", "Account", "store",
+         "Your reactions and what they mean, and the WhatsApp chat of each code list - the same in every app.",
+         "tools.account.shop:ShopPage"),
 ]

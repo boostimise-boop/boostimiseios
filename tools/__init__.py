@@ -1,4 +1,4 @@
-"""The tools shown in the sidebar.
+"""The tools shown in the sidebar (the account's pages, `in_sidebar=False`, only in the account menu).
 
 Each tool is a QWidget page built by `factory` ("module:callable") the first time its sidebar
 button is clicked; after that it keeps running while other tools are open. A page may have:
@@ -22,6 +22,7 @@ class Tool:
     icon: str
     description: str
     factory: str
+    in_sidebar: bool = True
 
 
 TOOLS = [
@@ -57,11 +58,11 @@ TOOLS = [
          "tools.snap_rename.page:SnapRenamePage"),
     Tool("dashboard", "Dashboard", "Account", "layout-dashboard",
          "Your enhancements today, this week and this month, your plan and history - updated live.",
-         "tools.account.dashboard:DashboardPage"),
+         "tools.account.dashboard:DashboardPage", in_sidebar=False),
     Tool("plans", "Plans", "Account", "crown",
          "The free account and the paid plans; request a plan here.",
-         "tools.account.plans:PlansPage"),
+         "tools.account.plans:PlansPage", in_sidebar=False),
     Tool("shop", "Shop settings", "Account", "store",
          "Your reactions and what they mean, and the WhatsApp chat of each code list - the same in every app.",
-         "tools.account.shop:ShopPage"),
+         "tools.account.shop:ShopPage", in_sidebar=False),
 ]

@@ -225,7 +225,9 @@ class Guard(QObject):
             elif self._fresh(cached):
                 self._apply(OK, v)              # start at once, confirm in the background
         if account is not None:
-            account.live.connect(lambda _tick: self._soon.start())
+            # Releases / access changed in the admin panel ping app_settings. Not on every row: each
+            # check-in sets the profile's last_seen_at, whose change would start the next check.
+            account.table_changed.connect(lambda table: table == "app_settings" and self._soon.start())
             account.changed.connect(self._from_account_status)
             account.signed_in.connect(self._soon.start)
         self.check()

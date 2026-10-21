@@ -18,9 +18,9 @@ called **CasePilot**, and up to 2.1 **CoverDesk**; updating keeps all settings a
 | **Pathao Auto-fill** | Reads order messages in WhatsApp and fills Pathao's New Delivery form. | `dataentry` |
 | **PhotoMatch** | Finds the photos in one folder that are missing from another folder, then copies them. | `photomatch` |
 | **SnapRename** | Browse a folder's photos, rename them, drag them into sub-folders. | `photosrename` |
-| **Dashboard** | Your enhancements today / this week / this month, per-day chart, plan and history - updates live. | new (the website's dashboard) |
-| **Plans** | The free account and the paid plans; request a plan (an admin activates it). | new (the website's pricing) |
-| **Shop settings** | Your shop's reactions and what each one means (e.g. ❌ *Cancelled*), and the WhatsApp chat of each code list. Saved in your Boostimise account, so the website and the Android and iPhone apps use the same; signed out, saved on this PC. | new |
+| **Dashboard** (account menu) | Your enhancements today / this week / this month, per-day chart, plan and history - updates live. | new (the website's dashboard) |
+| **Plans** (account menu) | The free account and the paid plans; request a plan (an admin activates it). | new (the website's pricing) |
+| **Shop settings** (account menu) | Your shop's reactions and what each one means (e.g. ❌ *Cancelled*), and the WhatsApp chat of each code list. Saved in your Boostimise account, so the website and the Android and iPhone apps use the same; signed out, saved on this PC. | new |
 
 **Sign in with Google once, for every tool.** Boostimise opens on a *Sign in to Boostimise* screen;
 *Continue with Google* opens your browser's Google account picker and comes back to the app by

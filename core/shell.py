@@ -190,6 +190,8 @@ class Sidebar(QFrame):
         nav_lay.setSpacing(2)
         section = None
         for n, tool in enumerate(tools, 1):
+            if not tool.in_sidebar:  # the account's pages: in the account menu
+                continue
             if tool.section != section:
                 section = tool.section
                 label = QLabel(section.upper(), objectName="section")
@@ -498,7 +500,7 @@ class MainWindow(QMainWindow):
         self.pages[key] = page
         self._set_slot(key, page)
         busy_changed = getattr(page, "busy_changed", None)
-        if busy_changed is not None:
+        if busy_changed is not None and key in self.sidebar.buttons:
             busy_changed.connect(self.sidebar.buttons[key].set_busy)
 
     def _set_slot(self, key: str, widget: QWidget):

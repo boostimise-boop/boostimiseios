@@ -482,7 +482,9 @@ final class Account {
             guard let self else { return }
             if table == "shop_profiles" { Shop.shared.sync() }
             self.liveTick += 1
-            AppGuard.shared.soon()  // releases / access changed in the admin panel ping app_settings
+            // releases / access changed in the admin panel ping app_settings; not on every row: each
+            // check-in sets the profile's last_seen_at, whose change would start the next check
+            if table == "app_settings" { AppGuard.shared.soon() }
             self.reloadJob?.cancel()
             self.reloadJob = Task {
                 try? await Task.sleep(nanoseconds: 400_000_000)

@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
@@ -78,6 +79,7 @@ object Nav {
     enum class Screen(val title: String, val icon: ImageVector, val busyKey: String?) {
         ENHANCER("Photo Enhancer", Icons.Filled.AutoAwesome, "enhancer"),
         FETCH_CODE("Fetch by Code", Icons.Filled.Image, "fetch_by_code"),
+        FETCH_ENHANCE("Fetch & Enhance", Icons.Filled.AutoFixHigh, "fetch_enhance"),
         REACTION_LIST("Reaction List", Icons.Filled.FormatListBulleted, "reaction_list"),
         RENAME_MATCH("Rename by Match", Icons.Filled.DriveFileRenameOutline, "rename_by_match"),
         MODEL_DETECT("Model Detect", Icons.Filled.Smartphone, "model_detect"),
@@ -188,6 +190,7 @@ private fun Shell(activity: Activity) {
                     when (screen) {
                         Nav.Screen.ENHANCER -> EnhancerScreen()
                         Nav.Screen.FETCH_CODE -> FetchScreen(com.boostimise.app.Tools.fetchByCode)
+                        Nav.Screen.FETCH_ENHANCE -> FetchEnhanceScreen()
                         Nav.Screen.REACTION_LIST -> ReactionListScreen()
                         Nav.Screen.RENAME_MATCH -> RenameScreen()
                         Nav.Screen.MODEL_DETECT -> ModelDetectScreen()

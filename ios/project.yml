@@ -8,8 +8,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "1.0.9"
-    CURRENT_PROJECT_VERSION: "10"
+    MARKETING_VERSION: "1.0.10"
+    CURRENT_PROJECT_VERSION: "11"
 packages:
   PhoneNumberKit:
     url: https://github.com/marmelroy/PhoneNumberKit

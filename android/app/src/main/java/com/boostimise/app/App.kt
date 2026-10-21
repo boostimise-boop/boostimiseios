@@ -5,6 +5,7 @@ import com.boostimise.app.core.Account
 import com.boostimise.app.core.AppGuard
 import com.boostimise.app.core.Storage
 import com.boostimise.app.tools.enhancer.EnhancerTool
+import com.boostimise.app.tools.fetch.FetchEnhanceTool
 import com.boostimise.app.tools.fetch.FetchTool
 import com.boostimise.app.tools.model.ModelDetectTool
 import com.boostimise.app.tools.pathao.PathaoTool
@@ -21,6 +22,7 @@ object Tools {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     lateinit var enhancer: EnhancerTool
     lateinit var fetchByCode: FetchTool
+    lateinit var fetchEnhance: FetchEnhanceTool
     lateinit var reactionList: ReactionListTool
     lateinit var renameByMatch: RenameTool
     lateinit var modelDetect: ModelDetectTool
@@ -37,6 +39,7 @@ class App : Application() {
         WaEngine.init(this, Tools.scope)
         Tools.enhancer = EnhancerTool(Tools.scope)
         Tools.fetchByCode = FetchTool("fetch_by_code", "Fetch by Code", scope = Tools.scope)
+        Tools.fetchEnhance = FetchEnhanceTool(Tools.scope)
         Tools.reactionList = ReactionListTool(Tools.scope)
         Tools.renameByMatch = RenameTool(Tools.scope)
         Tools.modelDetect = ModelDetectTool(Tools.scope)

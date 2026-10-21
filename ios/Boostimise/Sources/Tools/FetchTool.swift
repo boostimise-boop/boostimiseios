@@ -63,8 +63,15 @@ func sha256Hex(_ data: Data) -> String {
     SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
 
+/// Thrown by a tool's `saveCode` to end the whole run (e.g. today's enhancements are used up).
+struct StopRun: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
+}
+
 /// Fetch by Code (tools/whatsapp_fetch): finds the photos of each code in the
 /// WhatsApp chats and saves them as "2-558 Realme C85.jpg" in Files › Boostimise › <tool>.
+/// Fetch & Enhance uses it with its own steps (`prepare`, `existingLookup`, `saveCode`).
 @MainActor @Observable
 final class FetchTool {
     @MainActor @Observable
@@ -84,10 +91,18 @@ final class FetchTool {
     private(set) var rows: [Row] = []
     let log = ToolLog()
     private(set) var running = false
-    private(set) var activity = ""
+    var activity = ""
     private(set) var progress = 0.0
     private(set) var summary = ""
     @ObservationIgnored private var job: Task<Void, Never>?
+
+    // Another tool's steps (nil = Fetch by Code's own)
+    /// Runs before WhatsApp is used; throw StopRun to not start.
+    @ObservationIgnored var prepare: (() async throws -> Void)?
+    /// Looks up what an earlier run saved for a code ("<base>" -> its file name, or nil).
+    @ObservationIgnored var existingLookup: (() -> (String) -> String?)?
+    /// Saves one code's downloaded photos (bytes, ".jpg"); returns ("ok" | "none" | "error", photos saved).
+    @ObservationIgnored var saveCode: ((Row, String, [(Data, String)], Int, [JSON]) async throws -> (String, Int))?
 
     // settings (remembered)
     var folder: String
@@ -195,6 +210,7 @@ final class FetchTool {
         Jobs.shared.begin(key, "\(title): starting…")
         job = Task {
             do {
+                try await prepare?()
                 try await WaEngine.shared.awaitReady { [self] in
                     activity = $0
                     Jobs.shared.progress(key, "\(title): \($0)")
@@ -203,6 +219,9 @@ final class FetchTool {
             } catch is CancellationError {
                 log.add("Stopped by user.")
                 summary = "Stopped."
+            } catch let e as StopRun {
+                log.add("Stopped: \(e.message)")
+                summary = "Stopped: \(e.message)"
             } catch {
                 log.add("Error: \(error.localizedDescription)")
                 summary = "Error: \(error.localizedDescription)"
@@ -220,11 +239,12 @@ final class FetchTool {
     private func runJob(_ todoRows: [Row]) async throws {
         let started = Date()
         var ok = 0, none = 0, skipped = 0, errors = 0, files = 0
-        let existing = Storage.namesIn(folderName)
+        let names = Storage.namesIn(folderName)
+        let existing: (String) -> String? = existingLookup?() ?? { Codes.existingOutput(names, $0) }
         var todo: [(Row, String)] = []
         for r in todoRows {
             let base = r.item.baseName(includeDate: includeDate)
-            if skipExisting, let prev = Codes.existingOutput(existing, base) {
+            if skipExisting, let prev = existing(base) {
                 r.kind = "skipped"
                 r.text = "Already saved"
                 r.saved = prev
@@ -245,6 +265,8 @@ final class FetchTool {
                                                           since: scan.since)
                 } catch is CancellationError {
                     throw CancellationError()
+                } catch let e as StopRun {
+                    throw e
                 } catch {
                     row.kind = "error"
                     row.text = "Error: \(error.localizedDescription)"
@@ -401,6 +423,7 @@ final class FetchTool {
             row.text = "Found \(images.count), download failed"
             return ("error", 0)
         }
+        if let saveCode { return try await saveCode(row, base, files, failed, images) }
         // one photo -> "<base>.jpg"; several -> "<base> 1.jpg", "<base> 2.jpg", ...
         var first = ""
         for (i, f) in files.enumerated() {

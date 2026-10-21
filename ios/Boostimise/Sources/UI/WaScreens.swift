@@ -62,12 +62,15 @@ struct WhatsAppHeader: View {
 
 struct FetchScreen: View {
     let t: FetchTool
+    var codesHint = "Lines like \"2-558  Realme C85  26/9\" - the photos are saved as \"2-558 Realme C85.jpg\"."
+    /// More settings (Fetch & Enhance's), shown before the folder.
+    var extra: AnyView? = nil
 
     var body: some View {
         @Bindable var t = self.t
         Page {
             WaBanner()
-            Card(title: "1  Codes", hint: "Lines like \"2-558  Realme C85  26/9\" - the photos are saved as \"2-558 Realme C85.jpg\".") {
+            Card(title: "1  Codes", hint: codesHint) {
                 CodeListBox(text: Binding(get: { t.codeText }, set: { t.codeText = $0; t.parse() }))
                 if !t.rows.isEmpty { Hint("\(t.rows.count) codes") }
             }
@@ -85,6 +88,7 @@ struct FetchScreen: View {
                 }
                 CheckRow("Add the date to names (26/9 → 26-9)", $t.includeDate)
                 CheckRow("Skip codes that are already saved", $t.skipExisting)
+                if let extra { extra }
                 LabeledField(label: "Save in Files › Boostimise ›", text: $t.folder)
             }
             Card(title: "3  Run") {
@@ -210,6 +214,35 @@ struct ReactionListScreen: View {
                 }
             }
             LogBox(log: t.log)
+        }
+    }
+}
+
+struct FetchEnhanceScreen: View {
+    let t = Tools.fetchEnhance
+
+    var body: some View {
+        @Bindable var t = self.t
+        FetchScreen(t: t.fetch,
+                    codesHint: "Lines like \"2-558  Realme C85\" - each code's photos of people are enhanced and saved as " +
+                        "\"2-558 Realme C85.jpg\"; 2 or more go into a folder \"2-558 Realme C85\" as img1.jpg, img2.jpg …",
+                    extra: AnyView(VStack(alignment: .leading, spacing: 10) {
+                        SelectField(label: "Enhance", options: ENHANCE_SCALES, value: $t.scale)
+                        CheckRow("Only photos of people (skip phones, screenshots …)", $t.peopleOnly)
+                        CheckRow("Add the (note) from the WhatsApp caption", $t.addNote)
+                        Hint("Each photo is enhanced on the Boostimise server like in the Photo Enhancer, and counts in your daily " +
+                             "enhancements. The names come from the code list straight away (the Windows app can also check them " +
+                             "with Rename by Match).")
+                    }))
+        .alert(t.denied == "blocked" ? "Account suspended" : "Daily limit reached",
+               isPresented: Binding(get: { !t.denied.isEmpty }, set: { if !$0 { t.denied = "" } })) {
+            if t.denied == "limit" { Button("See plans") { t.denied = ""; Nav.shared.go(.plans) } }
+            Button("Close", role: .cancel) { t.denied = "" }
+        } message: {
+            let q = Account.shared.quota
+            Text(t.denied == "blocked" ? "Your account has been suspended."
+                 : "You've used today's enhancements" + ((q?.resetsAt ?? "").isEmpty ? "" : " - more in \(formatResetIn(q!.resetsAt))") +
+                   ". A paid plan gives you more every day.")
         }
     }
 }

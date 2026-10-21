@@ -58,6 +58,17 @@ object Storage {
         out
     }
 
+    /** Like [namesIn], also in its sub folders: "2-226 Realme P3 Ultra.jpg", "2-221 Oppo a6 pro 5g/img1.jpg". */
+    suspend fun namesUnder(relPath: String): Set<String> = withContext(Dispatchers.IO) {
+        val out = mutableSetOf<String>()
+        app.contentResolver.query(collection(relPath),
+            arrayOf(MediaStore.MediaColumns.RELATIVE_PATH, MediaStore.MediaColumns.DISPLAY_NAME),
+            "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?", arrayOf("$relPath%"), null)?.use { c ->
+            while (c.moveToNext()) out += (c.getString(0) ?: "").removePrefix(relPath) + c.getString(1)
+        }
+        out
+    }
+
     /** Deletes this app's own file of that name in the folder (to replace it). */
     suspend fun delete(relPath: String, name: String) = withContext(Dispatchers.IO) {
         runCatching {

@@ -703,7 +703,7 @@ class RenameTool(private val scope: CoroutineScope) {
             doneRe.find(name)?.let { ProductCode.norm(it.groupValues[1], it.groupValues[2]) }
 
         /** "6-852 Nubia a56", with only (bracketed) text after it: a note or "(2)". */
-        private fun isName(name: String, base: String): Boolean =
+        fun isName(name: String, base: String): Boolean =
             name.startsWith(base, ignoreCase = true) && Regex("""(\s*\([^()]*\))*""").matches(name.substring(base.length))
 
         /** True if the photo already has the name its code gives it ("6-852 Nubia a56.jpg", "… (2).jpg", or img1.jpg

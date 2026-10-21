@@ -88,25 +88,29 @@ fun autoFillListChats(lists: Collection<String>, into: MutableMap<String, ChatFi
     }
 }
 
+/** Thrown by a tool's [FetchTool.saveCode] to end the whole run (e.g. today's enhancements are used up). */
+class StopRun(message: String) : Exception(message)
+
 /**
  * Fetch by Code (tools/whatsapp_fetch): finds the photos of each code in the
  * WhatsApp chats and saves them as "2-558 Realme C85.jpg" in Pictures/Boostimise/<tool>.
+ * Fetch & Enhance builds on it: same search and download, its own [saveCode].
  */
-class FetchTool(val key: String, val title: String, private val scope: CoroutineScope) {
+open class FetchTool(val key: String, val title: String, protected val scope: CoroutineScope) {
     class Row(val item: CodeItem) {
         var kind by mutableStateOf("")       // "" | working | ok | none | error | skipped
         var text by mutableStateOf("")
         var saved by mutableStateOf("")
     }
 
-    private val prefs = Storage.prefs(key)
+    protected val prefs = Storage.prefs(key)
     var codeText by mutableStateOf("")
     val rows = mutableStateListOf<Row>()
     val log = ToolLog()
     var running by mutableStateOf(false)
         private set
     var activity by mutableStateOf("")
-        private set
+        protected set
     var progress by mutableStateOf(0f)
         private set
     var summary by mutableStateOf("")
@@ -129,7 +133,7 @@ class FetchTool(val key: String, val title: String, private val scope: Coroutine
 
     val relPath get() = Storage.picturesPath(folder.ifBlank { title })
 
-    fun saveSettings() {
+    open fun saveSettings() {
         prefs.edit().putString("folder", folder).putString("chat_id", chat.id).putString("chat_title", chat.title)
             .putBoolean("groups_only", chat.groupsOnly).putString("neighbors", neighbors).putInt("gap_minutes", gapMinutes)
             .putInt("lookback_days", lookbackDays).putBoolean("include_date", includeDate)
@@ -173,11 +177,15 @@ class FetchTool(val key: String, val title: String, private val scope: Coroutine
         Jobs.begin(key, "$title: starting…")
         job = scope.launch {
             try {
+                prepare()
                 WaEngine.awaitReady { activity = it; Jobs.progress(key, "$title: $it") }
                 WaEngine.withTurn(title, { activity = it }) { runJob(todoRows) }
             } catch (e: CancellationException) {
                 log.add("Stopped by user.")
                 summary = "Stopped."
+            } catch (e: StopRun) {
+                log.add("Stopped: ${e.message}")
+                summary = "Stopped: ${e.message}"
             } catch (e: Exception) {
                 log.add("Error: ${e.message}")
                 summary = "Error: ${e.message}"
@@ -193,6 +201,15 @@ class FetchTool(val key: String, val title: String, private val scope: Coroutine
         }
     }
 
+    /** Runs before WhatsApp is used; throw [StopRun] to not start. */
+    protected open suspend fun prepare() {}
+
+    /** Looks up what an earlier run saved for a code ("<base>" -> its file name, or null). */
+    protected open suspend fun existingLookup(): (String) -> String? {
+        val names = Storage.namesIn(relPath)
+        return { base -> Codes.existingOutput(names, base) }
+    }
+
     private suspend fun runJob(todoRows: List<Row>) {
         val started = System.currentTimeMillis()
         var ok = 0
@@ -200,11 +217,11 @@ class FetchTool(val key: String, val title: String, private val scope: Coroutine
         var skipped = 0
         var errors = 0
         var files = 0
-        val existing = Storage.namesIn(relPath)
+        val existing = existingLookup()
         val todo = mutableListOf<Pair<Row, String>>()
         for (r in todoRows) {
             val base = r.item.baseName(includeDate)
-            val prev = if (skipExisting) Codes.existingOutput(existing, base) else null
+            val prev = if (skipExisting) existing(base) else null
             if (prev != null) {
                 r.kind = "skipped"
                 r.text = "Already saved"
@@ -220,6 +237,8 @@ class FetchTool(val key: String, val title: String, private val scope: Coroutine
                 val (kind, n) = try {
                     downloadAndSave(row, base, images, scan.mentions[i.toString()] ?: 0, scan.since)
                 } catch (e: CancellationException) {
+                    throw e
+                } catch (e: StopRun) {
                     throw e
                 } catch (e: Exception) {
                     row.kind = "error"
@@ -353,6 +372,13 @@ class FetchTool(val key: String, val title: String, private val scope: Coroutine
             row.text = "Found ${images.size}, download failed"
             return "error" to 0
         }
+        return saveCode(row, base, files, failed, images)
+    }
+
+    /** Saves one code's downloaded photos (bytes, ".jpg"); returns ("ok" | "none" | "error", photos saved). */
+    protected open suspend fun saveCode(row: Row, base: String, files: List<Pair<ByteArray, String>>, failed: Int,
+                                        images: List<JSONObject>): Pair<String, Int> {
+        val code = row.item.code
         // one photo -> "<base>.jpg"; several -> "<base> 1.jpg", "<base> 2.jpg", ...
         var first = ""
         files.forEachIndexed { i, (bytes, ext) ->

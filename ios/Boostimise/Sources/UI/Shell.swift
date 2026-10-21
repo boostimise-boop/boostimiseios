@@ -55,6 +55,7 @@ struct ShellView: View {
         switch s {
         case .enhancer: EnhancerScreen()
         case .fetchCode: FetchScreen(t: Tools.fetchByCode)
+        case .fetchEnhance: FetchEnhanceScreen()
         case .reactionList: ReactionListScreen()
         case .modelDetect: ModelDetectScreen()
         case .pathao: PathaoScreen()

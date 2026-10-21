@@ -3,6 +3,7 @@ package com.boostimise.app.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.boostimise.app.Tools
 import com.boostimise.app.tools.fetch.ChatFilter
+import com.boostimise.app.tools.fetch.ENHANCE_SCALES
 import com.boostimise.app.tools.fetch.FetchTool
 import com.boostimise.app.tools.fetch.NEIGHBOUR_MODES
 import com.boostimise.app.tools.reactions.CUSTOM
@@ -85,11 +87,13 @@ fun WhatsAppHeader() {
 }
 
 @Composable
-fun FetchScreen(t: FetchTool) {
+fun FetchScreen(t: FetchTool,
+                codesHint: String = "Lines like \"2-558  Realme C85  26/9\" - the photos are saved as \"2-558 Realme C85.jpg\".",
+                extra: @Composable ColumnScope.() -> Unit = {}) {
     val ctx = LocalContext.current
     Page {
         WaBanner()
-        Section("1  Codes", "Lines like \"2-558  Realme C85  26/9\" - the photos are saved as \"2-558 Realme C85.jpg\".") {
+        Section("1  Codes", codesHint) {
             CodeListBox(t.codeText, { t.codeText = it; t.parse() })
             if (t.rows.isNotEmpty()) Hint("${t.rows.size} codes")
         }
@@ -104,6 +108,7 @@ fun FetchScreen(t: FetchTool) {
             }
             CheckRow("Add the date to names (26/9 → 26-9)", t.includeDate) { t.includeDate = it }
             CheckRow("Skip codes that are already saved", t.skipExisting) { t.skipExisting = it }
+            extra()
             androidx.compose.material3.OutlinedTextField(t.folder, { t.folder = it }, label = { Text("Save in Pictures/Boostimise/") },
                 singleLine = true, modifier = Modifier.fillMaxWidth())
         }
@@ -208,4 +213,19 @@ fun ReactionListScreen() {
         }
         LogBox(t.log)
     }
+}
+
+@Composable
+fun FetchEnhanceScreen() {
+    val t = Tools.fetchEnhance
+    FetchScreen(t, "Lines like \"2-558  Realme C85\" - each code's photos of people are enhanced and saved as " +
+        "\"2-558 Realme C85.jpg\"; 2 or more go into a folder \"2-558 Realme C85\" as img1.jpg, img2.jpg …") {
+        Select("Enhance", ENHANCE_SCALES, t.scale) { t.scale = it }
+        CheckRow("Only photos of people (skip phones, screenshots …)", t.peopleOnly) { t.peopleOnly = it }
+        CheckRow("Add the (note) from the WhatsApp caption", t.addNote) { t.addNote = it }
+        Hint("Each photo is enhanced on the Boostimise server like in the Photo Enhancer, and counts in your daily " +
+            "enhancements. The names come from the code list straight away (the Windows app can also check them " +
+            "with Rename by Match).")
+    }
+    if (t.denied.isNotEmpty()) LimitDialog(t.denied) { t.denied = "" }
 }

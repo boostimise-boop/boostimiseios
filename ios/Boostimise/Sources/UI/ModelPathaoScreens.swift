@@ -155,6 +155,7 @@ struct PathaoScreen: View {
 }
 
 /// A Model Detect result as a row kind: found ok, unsure "none" (amber), not found "error" (red).
+@MainActor
 private func modelKind(_ r: ModelDetectTool.Result) -> String {
     if !r.done { return "working" }
     if r.model.isEmpty || r.model == "NOT FOUND" || r.model == "NO IMAGE" { return "error" }

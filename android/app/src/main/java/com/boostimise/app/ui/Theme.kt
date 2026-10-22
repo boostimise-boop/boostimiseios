@@ -20,6 +20,21 @@ object Brand {
     val SUCCESS = Color(0xFF16A34A)
     val WARNING = Color(0xFFC27803)
     val ERROR = Color(0xFFDC2626)
+    // soft backgrounds (icon squares, status squares) and the darker text that reads on them
+    val SUCCESS_SOFT = Color(0xFFE7F6EC)
+    val SUCCESS_DARK = Color(0xFF137A39)
+    val WARNING_SOFT = Color(0xFFFFF3DC)
+    val WARNING_DARK = Color(0xFF8A5300)
+    val ERROR_SOFT = Color(0xFFFDECEC)
+    val ERROR_DARK = Color(0xFFB91C1C)
+    val NEUTRAL_SOFT = Color(0xFFEEF1F6)
+    val LINE = Color(0xFFE6EBF3)          // card outlines
+    val TRACK = Color(0xFFF1F4F9)         // code chips
+    // on the navy control card
+    val ON_NAVY = Color(0xFFC6D2E8)
+    val LIVE = Color(0xFF34D399)          // working, saved
+    val AMBER_ON_NAVY = Color(0xFFF2B544)
+    val RED_ON_NAVY = Color(0xFFF87171)
 }
 
 @Composable

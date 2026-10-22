@@ -18,22 +18,34 @@ struct Page<Content: View>: View {
     }
 }
 
-/// A white card with an optional title and hint (the Android app's Section).
+/// A white rounded card (the Android app's Section); its head is the `icon` on a soft square (Look.swift),
+/// the title and the hint under it.
 struct Card<Content: View>: View {
     var title: String? = nil
     var hint: String? = nil
+    var icon: String? = nil
+    var tint: Tint = .accent
     @ViewBuilder var content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let title { Text(title).font(.system(size: 16, weight: .semibold)).foregroundStyle(Brand.navy) }
-            if let hint { Hint(hint) }
+        VStack(alignment: .leading, spacing: 12) {
+            if title != nil || hint != nil {
+                HStack(spacing: 12) {
+                    if let icon { IconSquare(icon: icon, tint: tint) }
+                    VStack(alignment: .leading, spacing: 1) {
+                        if let title { Text(title).font(.system(size: 15.5, weight: .bold)).foregroundStyle(Brand.navy) }
+                        if let hint {
+                            Text(hint).font(.system(size: 12.5)).foregroundStyle(Brand.text2).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
             content
         }
-        .padding(14)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Brand.surface, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Brand.border, lineWidth: 1))
+        .background(Brand.surface, in: RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(Brand.line, lineWidth: 1))
     }
 }
 
@@ -401,52 +413,37 @@ struct ListChatPicker: View {
     }
 }
 
-/// The WhatsApp state, and a way to the WhatsApp page when it is not ready.
+/// The WhatsApp state as a pill in its colour, and a way to the WhatsApp page when it is not ready.
 struct WaBanner: View {
     var body: some View {
         let wa = WaEngine.shared
-        let color: Color = {
+        let look: (bg: Color, fg: Color, dot: Color) = {
             switch wa.phase {
-            case .ready: return Brand.success
-            case .qr: return Brand.warning
-            case .error: return Brand.error
-            default: return Brand.accent
+            case .ready: return (Brand.successSoft, Brand.successDark, Brand.success)
+            case .qr: return (Brand.warningSoft, Brand.warningDark, Brand.warning)
+            case .error: return (Brand.errorSoft, Brand.errorDark, Brand.error)
+            case .loading: return (Brand.accentSoft, Brand.accentDark, Brand.accent)
+            case .off: return (Brand.neutralSoft, Brand.text2, Brand.muted)
             }
         }()
         HStack(spacing: 8) {
-            Circle().fill(color).frame(width: 10, height: 10)
+            Circle().fill(look.dot).frame(width: 8, height: 8)
             Text(wa.phase == .off ? "WhatsApp is not open"
                  : "WhatsApp: \(wa.message)" + (wa.holder.isEmpty ? "" : " · \(wa.holder) is using it"))
-                .font(.system(size: 13)).foregroundStyle(Brand.navy)
+                .font(.system(size: 13, weight: .semibold)).foregroundStyle(look.fg)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if wa.phase != .ready {
-                LinkButton("Open") {
+                Button("Open") {
                     wa.open()
                     Nav.shared.go(.whatsapp)
                 }
+                .font(.system(size: 14, weight: .bold)).foregroundStyle(Brand.accent).buttonStyle(.borderless)
             }
         }
-        .padding(10)
-        .background(Brand.accentSoft, in: RoundedRectangle(cornerRadius: 10))
-    }
-}
-
-struct RunBar: View {
-    let running: Bool
-    let progress: Double
-    let activity: String
-    let summary: String
-    var startLabel = "Start"
-    let onStart: () -> Void
-    let onStop: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if running { SecondaryButton("Stop", action: onStop) } else { PrimaryButton(startLabel, action: onStart) }
-            if running { ProgressView(value: min(max(progress, 0), 1)).tint(Brand.accent) }
-            if !activity.isEmpty { Hint(activity) }
-            if !summary.isEmpty { Text(summary).font(.system(size: 14, weight: .medium)).foregroundStyle(Brand.navy) }
-        }
+        .padding(.leading, 14)
+        .padding(.trailing, 12)
+        .frame(minHeight: 40)
+        .background(look.bg, in: RoundedRectangle(cornerRadius: 20))
     }
 }
 
@@ -457,11 +454,15 @@ struct LogBox: View {
     var body: some View {
         Card {
             Button { open.toggle() } label: {
-                HStack {
-                    Text("Log (\(log.lines.count))").font(.system(size: 15, weight: .semibold)).foregroundStyle(Brand.navy)
+                HStack(spacing: 12) {
+                    IconSquare(icon: "terminal", tint: .neutral, size: 32)
+                    Text("Log").font(.system(size: 15.5, weight: .bold)).foregroundStyle(Brand.navy)
+                    Text(plural(log.lines.count, "line")).font(.system(size: 12.5)).foregroundStyle(Brand.text2)
                     Spacer()
-                    Text(open ? "Hide" : "Show").foregroundStyle(Brand.accent)
+                    Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Brand.text2)
                 }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             if open {
@@ -480,24 +481,6 @@ struct LogBox: View {
                 }
             }
         }
-    }
-}
-
-struct StatusDot: View {
-    let kind: String
-
-    var body: some View {
-        let c: Color = {
-            switch kind {
-            case "ok": return Brand.success
-            case "working": return Brand.accent
-            case "none": return Brand.warning
-            case "error": return Brand.error
-            case "skipped": return Brand.muted
-            default: return Brand.idle
-            }
-        }()
-        Circle().fill(c).frame(width: 10, height: 10)
     }
 }
 

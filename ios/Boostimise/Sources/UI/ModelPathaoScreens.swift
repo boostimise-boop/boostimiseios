@@ -6,16 +6,38 @@ struct ModelDetectScreen: View {
     var body: some View {
         @Bindable var t = Tools.modelDetect
         let groups = t.groups()
+        let total = groups.reduce(0) { $0 + $1.1.count }
+        let kinds: [String] = t.results.map { modelKind($0) }
+        let found = kinds.filter { $0 == "ok" || $0 == "none" }.count
+        let title: String = {
+            if t.running { return "Finding the phone models of \(plural(total, "code"))" }
+            if !t.results.isEmpty { return "\(found) of \(plural(t.results.count, "code")) have a model" }
+            return total == 0 ? "Load the code list" : "\(plural(total, "code")) ready"
+        }()
+        let done: Int = t.running || !t.results.isEmpty ? Int((t.progress * Double(total)).rounded()) : 0
         Page {
             WaBanner()
-            Card(title: "1  Code list", hint: "Your product codes list. The models are written next to the codes.") {
+            ControlCard(kicker: waKicker(t.running), title: title, sub: t.running ? t.activity : "",
+                        ring: ringOf(done, total, "codes", running: t.running),
+                        counts: [HeroCount(label: "Found", value: kinds.filter { $0 == "ok" }.count, color: Brand.live),
+                                 HeroCount(label: "Unsure", value: kinds.filter { $0 == "none" }.count, color: Brand.amberOnNavy),
+                                 HeroCount(label: "Not found", value: kinds.filter { $0 == "error" }.count, color: Brand.redOnNavy)]) {
+                if t.running {
+                    HeroButton("Stop", icon: "stop.fill", outline: true) { t.stop() }
+                } else {
+                    HeroButton("Start", icon: "play.fill", primary: true) { t.start() }
+                }
+            }
+            Card(title: "Code list", hint: "Your product codes list. The models are written next to the codes.",
+                 icon: "list.bullet", tint: .neutral) {
                 CodeListBox(text: $t.codeText, placeholder: "5a-401\n5a-402\n5a-403 samsung a70")
                 if !groups.isEmpty {
-                    Hint("\(groups.reduce(0) { $0 + $1.1.count }) codes in \(groups.count) group(s)")
+                    Hint("\(plural(total, "code")) in \(groups.count) group(s)")
                 }
             }
             if !groups.isEmpty {
-                Card(title: "2  Chat of each code group", hint: "A chat whose name contains the group code (e.g. \"(5a-)\") is chosen by itself.") {
+                Card(title: "Chat of each code group", hint: "A chat whose name contains the group code (e.g. \"(5a-)\") is chosen by itself.",
+                     icon: "bubble.left.and.bubble.right", tint: .success) {
                     ForEach(groups.indices, id: \.self) { i in
                         let p = groups[i].0
                         let codes = groups[i].1
@@ -24,7 +46,7 @@ struct ModelDetectScreen: View {
                     }
                 }
             }
-            Card(title: "3  Settings") {
+            Card(title: "Settings", icon: "slider.horizontal.3", tint: .warning) {
                 SelectField(label: "In the chat", options: [("below", "Code first, photos below it (until the next code)"),
                                                            ("above", "Photos first, code below them (back to the previous code)")],
                             value: $t.mode)
@@ -45,31 +67,19 @@ struct ModelDetectScreen: View {
                 CheckRow("Save the photos (Files › Boostimise › Model Detect › <code>)", $t.savePhotos)
                 CheckRow("Skip codes that already have a model in the list", $t.skipDone)
             }
-            Card {
-                RunBar(running: t.running, progress: t.progress, activity: t.activity, summary: "",
-                       onStart: { t.start() }, onStop: { t.stop() })
-            }
             if !t.results.isEmpty {
-                Card(title: "Results") {
-                    HStack(spacing: 8) {
+                Card(title: "Results", hint: "The models are written next to the codes", icon: "iphone", tint: .accent) {
+                    Flow(spacing: 8) {
                         PrimaryButton("Copy list with models") { copyText(t.resultText()) }
                         SecondaryButton("Save .txt") { saveText("productcodes models.txt", t.resultText()) }
                     }
-                    ForEach(t.results) { r in
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 8) {
-                                StatusDot(kind: !r.done ? "working"
-                                          : (r.model.isEmpty || r.model == "NOT FOUND" || r.model == "NO IMAGE" || r.confidence == "low") ? "none" : "ok")
-                                Text(r.code).font(.system(size: 15, weight: .semibold))
-                                Text(r.model.ifEmpty("—")).frame(maxWidth: .infinity, alignment: .leading)
-                                if !r.confidence.isEmpty { Text(r.confidence).font(.system(size: 12)).foregroundStyle(Brand.muted) }
-                            }
-                            if !r.note.isEmpty {
-                                Text(r.note + (r.images > 0 ? " · \(r.images) photo(s)" : "")).font(.system(size: 12)).foregroundStyle(Brand.text2)
-                            }
+                    VStack(spacing: 0) {
+                        ForEach(t.results) { r in
+                            StatusRow(kind: modelKind(r), code: r.code, name: r.model.ifEmpty("—"),
+                                      status: [r.confidence.isEmpty ? "" : "\(r.confidence) confidence",
+                                               r.images > 0 ? plural(r.images, "photo") : ""].filter { !$0.isEmpty }.joined(separator: " · "),
+                                      more: [r.note])
                         }
-                        .padding(.vertical, 4)
-                        Divider()
                     }
                 }
             }
@@ -92,26 +102,14 @@ struct PathaoScreen: View {
         VStack(spacing: 0) {
             // the controls: at most about half of the screen, the Pathao page below
             ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 10) {
                     WaBanner()
+                    PathaoControl(t: t)
                     // the buttons wrap on a narrow screen instead of being squeezed
                     Flow(spacing: 8) {
                         SecondaryButton("Open list") { importing = true }
                         SecondaryButton("Paste list") { if let p = pasteText() { t.pasteList(p) } }
                         LinkButton("Settings") { settings = true }
-                    }
-                    if !t.listName.isEmpty {
-                        Hint("\(t.listName): \(t.items.count) codes, " +
-                             "\(t.items.filter { $0.status == PathaoTool.SAVED || $0.status == PathaoTool.SAVED_EARLIER || $0.status == PathaoTool.IN_PATHAO }.count) saved")
-                    }
-                    Text(t.state).font(.system(size: 13)).foregroundStyle(Brand.navy)
-                    if !t.attention.isEmpty { Hint(t.attention, Brand.error) }
-                    // which codes of the list already have a Pathao order (by Merchant Order ID); the phone is written in the list
-                    SecondaryButton(t.checking ? "Checking Pathao…" : "Check Pathao", enabled: !t.checking && !t.items.isEmpty) { t.checkPathao() }
-                    Flow(spacing: 8) {
-                        if t.running { SecondaryButton("Pause") { t.pause() } } else { PrimaryButton("Start") { t.start() } }
-                        SecondaryButton("Saved → Next", enabled: t.cur != nil) { t.markSaved() }
-                        LinkButton("Skip") { t.skip() }
                     }
                     if let item = t.cur, let o = item.order {
                         CurrentOrder(item: item, order: o).id(item.id.uuidString + o.code + o.phone)
@@ -122,13 +120,14 @@ struct PathaoScreen: View {
                         if t.listName == "pasted list" { LinkButton("Copy list") { copyText(t.listText) } }
                     }
                     if showList {
-                        ForEach(t.items) { it in
-                            HStack {
-                                Text(it.code).font(.system(size: 14, weight: .medium)).frame(width: 90, alignment: .leading)
-                                Text(it.status).font(.system(size: 13)).foregroundStyle(Brand.text2)
-                                Spacer()
-                                if !t.running && [PathaoTool.NOT_FOUND, PathaoTool.SKIPPED, PathaoTool.PENDING].contains(it.status) {
-                                    LinkButton("Do now") { t.reread(it) }
+                        Card(title: "Codes", hint: t.listName.isEmpty ? nil : t.listName, icon: "list.bullet", tint: .neutral) {
+                            VStack(spacing: 0) {
+                                ForEach(t.items) { it in
+                                    StatusRow(kind: pathaoKind(it.status), code: it.code, status: it.status) {
+                                        if !t.running && [PathaoTool.NOT_FOUND, PathaoTool.SKIPPED, PathaoTool.PENDING].contains(it.status) {
+                                            LinkButton("Do now") { t.reread(it) }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -155,6 +154,59 @@ struct PathaoScreen: View {
     }
 }
 
+/// A Model Detect result as a row kind: found ok, unsure "none" (amber), not found "error" (red).
+private func modelKind(_ r: ModelDetectTool.Result) -> String {
+    if !r.done { return "working" }
+    if r.model.isEmpty || r.model == "NOT FOUND" || r.model == "NO IMAGE" { return "error" }
+    return r.confidence == "low" ? "none" : "ok"
+}
+
+/// A Pathao code's status as a row kind (tools/pathao_autofill ROW_KINDS).
+private func pathaoKind(_ status: String) -> String {
+    switch status {
+    case PathaoTool.FETCHING, PathaoTool.FILLED: return "working"
+    case PathaoTool.SAVED, PathaoTool.SAVED_EARLIER, PathaoTool.IN_PATHAO: return "ok"
+    case PathaoTool.NOT_FOUND: return "none"
+    case PathaoTool.SKIPPED: return "skipped"
+    default: return ""
+    }
+}
+
+/// Pathao's control card: what to do next, the saved / to do / not found counts and the run's buttons.
+private struct PathaoControl: View {
+    let t: PathaoTool
+
+    var body: some View {
+        let kinds = t.items.map { pathaoKind($0.status) }
+        let saved = kinds.filter { $0 == "ok" }.count
+        let kicker: (String, Color) = {
+            if !t.attention.isEmpty { return ("NEEDS YOU", Brand.amberOnNavy) }
+            if t.checking { return ("CHECKING PATHAO", Brand.sky) }
+            if t.waiting { return ("CHECK PATHAO AND SAVE", Brand.sky) }
+            if t.running { return ("WORKING", Brand.live) }
+            if !t.items.isEmpty && saved == t.items.count { return ("DONE", Brand.live) }
+            return ("READY", Brand.sky)
+        }()
+        let sub: String = t.cur.map { "Current order: \($0.code)" } ?? (t.listName.isEmpty ? "" : "List: \(t.listName)")
+        ControlCard(kicker: kicker, title: t.attention.isEmpty ? t.state : t.attention, sub: sub,
+                    ring: ringOf(saved, t.items.count, "saved"),
+                    counts: [HeroCount(label: "Saved", value: saved, color: Brand.live),
+                             HeroCount(label: "To do", value: kinds.filter { $0 == "" || $0 == "working" }.count, color: Brand.sky),
+                             HeroCount(label: "Not found", value: kinds.filter { $0 == "none" }.count, color: Brand.redOnNavy)]) {
+            if t.running {
+                HeroButton("Pause", icon: "pause.fill") { t.pause() }
+            } else {
+                HeroButton("Start", icon: "play.fill", primary: true) { t.start() }
+            }
+            HeroButton("Saved → Next", icon: "checkmark.circle", enabled: t.cur != nil) { t.markSaved() }
+            HeroButton("Skip", icon: "forward.end") { t.skip() }
+            // which codes of the list already have a Pathao order (by Merchant Order ID); the phone is written in the list
+            HeroButton(t.checking ? "Checking Pathao…" : "Check Pathao", icon: "magnifyingglass",
+                       enabled: !t.checking && !t.items.isEmpty) { t.checkPathao() }
+        }
+    }
+}
+
 private struct CurrentOrder: View {
     let item: PathaoTool.Item
     let order: OrderParser.Order
@@ -166,9 +218,13 @@ private struct CurrentOrder: View {
     @State private var loaded = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("\(item.code) · \(item.status)").font(.system(size: 15, weight: .semibold)).foregroundStyle(Brand.navy)
-            if !item.raw.isEmpty { Text(item.raw.take(400)).font(.system(size: 12)).foregroundStyle(Brand.text2) }
+        Card(title: "Current order", hint: "\(item.code) · \(item.status)", icon: "shippingbox", tint: .accent) {
+            if !item.raw.isEmpty {
+                Text(item.raw.take(400)).font(.system(size: 12)).foregroundStyle(Brand.text2)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Brand.bg, in: RoundedRectangle(cornerRadius: 12))
+            }
             HStack(spacing: 6) {
                 LabeledField(label: "Name", text: $name)
                 LabeledField(label: "Amount", text: $amount, keyboard: .numberPad).frame(width: 100)
@@ -191,8 +247,6 @@ private struct CurrentOrder: View {
                 LinkButton("Read WhatsApp again") { Tools.pathao.reread(item) }
             }
         }
-        .padding(8)
-        .background(Brand.accentSoft, in: RoundedRectangle(cornerRadius: 10))
         .onAppear {
             if loaded { return }
             loaded = true

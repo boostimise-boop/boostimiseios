@@ -6,6 +6,7 @@ import android.content.Context
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,6 +32,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -58,6 +62,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -80,13 +85,23 @@ fun Page(content: @Composable ColumnScope.() -> Unit) {
     )
 }
 
+/** A white rounded card; its head is the [icon] on a soft square (Look.kt), the title and the hint under it. */
 @Composable
-fun Section(title: String? = null, hint: String? = null, content: @Composable ColumnScope.() -> Unit) {
-    Surface(shape = RoundedCornerShape(14.dp), color = Brand.SURFACE, modifier = Modifier.fillMaxWidth()
-        .border(1.dp, Brand.BORDER, RoundedCornerShape(14.dp))) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (title != null) Text(title, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-            if (hint != null) Text(hint, color = Brand.TEXT_2, fontSize = 13.sp)
+fun Section(title: String? = null, hint: String? = null, icon: ImageVector? = null, tint: Tint = Tint.ACCENT,
+            content: @Composable ColumnScope.() -> Unit) {
+    Surface(shape = RoundedCornerShape(20.dp), color = Brand.SURFACE, border = BorderStroke(1.dp, Brand.LINE),
+        modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (title != null || hint != null) Row(verticalAlignment = Alignment.CenterVertically) {
+                if (icon != null) {
+                    IconSquare(icon, tint)
+                    Spacer(Modifier.width(12.dp))
+                }
+                Column(Modifier.weight(1f)) {
+                    if (title != null) Text(title, color = Brand.NAVY, fontWeight = FontWeight.Bold, fontSize = 15.5.sp)
+                    if (hint != null) Text(hint, color = Brand.TEXT_2, fontSize = 12.5.sp, lineHeight = 17.sp)
+                }
+            }
             content()
         }
     }
@@ -252,36 +267,26 @@ fun ListChatPicker(label: String, chat: ChatFilter?, fallback: String, onPick: (
     }
 }
 
-/** The WhatsApp state, and a way to the WhatsApp page when it is not ready. */
+/** The WhatsApp state as a pill in its colour, and a way to the WhatsApp page when it is not ready. */
 @Composable
 fun WaBanner() {
     val ready = WaEngine.phase == WaEngine.Phase.READY
-    val color = when (WaEngine.phase) {
-        WaEngine.Phase.READY -> Brand.SUCCESS
-        WaEngine.Phase.QR -> Brand.WARNING
-        WaEngine.Phase.ERROR -> Brand.ERROR
-        else -> Brand.ACCENT
+    val (bg, fg, dot) = when (WaEngine.phase) {
+        WaEngine.Phase.READY -> Triple(Brand.SUCCESS_SOFT, Brand.SUCCESS_DARK, Brand.SUCCESS)
+        WaEngine.Phase.QR -> Triple(Brand.WARNING_SOFT, Brand.WARNING_DARK, Brand.WARNING)
+        WaEngine.Phase.ERROR -> Triple(Brand.ERROR_SOFT, Brand.ERROR_DARK, Brand.ERROR)
+        WaEngine.Phase.LOADING -> Triple(Brand.ACCENT_SOFT, Brand.ACCENT_DARK, Brand.ACCENT)
+        WaEngine.Phase.OFF -> Triple(Brand.NEUTRAL_SOFT, Brand.TEXT_2, Brand.MUTED)
     }
-    Row(Modifier.fillMaxWidth().background(Brand.ACCENT_SOFT, RoundedCornerShape(10.dp)).padding(10.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(10.dp).background(color, CircleShape))
+    Row(Modifier.fillMaxWidth().heightIn(min = 40.dp).background(bg, RoundedCornerShape(20.dp))
+        .padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(8.dp).background(dot, CircleShape))
         Spacer(Modifier.width(8.dp))
         Text(if (WaEngine.phase == WaEngine.Phase.OFF) "WhatsApp is not open" else "WhatsApp: ${WaEngine.message}" +
             if (WaEngine.holder.isNotEmpty()) " · ${WaEngine.holder} is using it" else "",
-            Modifier.weight(1f), fontSize = 13.sp)
-        if (!ready) TextButton({ WaEngine.open(); Nav.go(Nav.Screen.WHATSAPP) }) { Text("Open") }
+            Modifier.weight(1f), color = fg, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        if (!ready) TextButton({ WaEngine.open(); Nav.go(Nav.Screen.WHATSAPP) }) { Text("Open", fontWeight = FontWeight.Bold) }
     }
-}
-
-@Composable
-fun RunBar(running: Boolean, progress: Float, activity: String, summary: String, startLabel: String = "Start",
-           onStart: () -> Unit, onStop: () -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (running) OutlinedButton(onStop) { Text("Stop") } else Button(onStart) { Text(startLabel) }
-    }
-    if (running) LinearProgressIndicator(progress = { progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
-    if (activity.isNotEmpty()) Hint(activity)
-    if (summary.isNotEmpty()) Text(summary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
 }
 
 @Composable
@@ -289,8 +294,12 @@ fun LogBox(log: ToolLog) {
     var open by remember { mutableStateOf(false) }
     Section {
         Row(Modifier.fillMaxWidth().clickable { open = !open }, verticalAlignment = Alignment.CenterVertically) {
-            Text("Log (${log.lines.size})", Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
-            Text(if (open) "Hide" else "Show", color = Brand.ACCENT)
+            IconSquare(Icons.Rounded.Terminal, Tint.NEUTRAL, 32.dp)
+            Spacer(Modifier.width(12.dp))
+            Text("Log", color = Brand.NAVY, fontWeight = FontWeight.Bold, fontSize = 15.5.sp)
+            Spacer(Modifier.width(8.dp))
+            Text(plural(log.lines.size, "line"), Modifier.weight(1f), color = Brand.TEXT_2, fontSize = 12.5.sp)
+            Icon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (open) "Hide" else "Show", tint = Brand.TEXT_2)
         }
         if (open) {
             val ctx = LocalContext.current
@@ -306,19 +315,6 @@ fun LogBox(log: ToolLog) {
 @Composable
 fun Chips(content: @Composable () -> Unit) = FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp),
     verticalArrangement = Arrangement.spacedBy(6.dp)) { content() }
-
-@Composable
-fun StatusDot(kind: String) {
-    val c = when (kind) {
-        "ok" -> Brand.SUCCESS
-        "working" -> Brand.ACCENT
-        "none" -> Brand.WARNING
-        "error" -> Brand.ERROR
-        "skipped" -> Brand.MUTED
-        else -> Color(0xFFD0D6E0)
-    }
-    Box(Modifier.size(10.dp).background(c, CircleShape))
-}
 
 fun toast(ctx: Context, text: String) = Toast.makeText(ctx, text, Toast.LENGTH_SHORT).show()
 

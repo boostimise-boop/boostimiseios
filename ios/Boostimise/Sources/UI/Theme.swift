@@ -24,6 +24,21 @@ enum Brand {
     static let warning = Color(hex: 0xC27803)
     static let error = Color(hex: 0xDC2626)
     static let idle = Color(hex: 0xD0D6E0)
+    // soft backgrounds (icon squares, status squares) and the darker text that reads on them
+    static let successSoft = Color(hex: 0xE7F6EC)
+    static let successDark = Color(hex: 0x137A39)
+    static let warningSoft = Color(hex: 0xFFF3DC)
+    static let warningDark = Color(hex: 0x8A5300)
+    static let errorSoft = Color(hex: 0xFDECEC)
+    static let errorDark = Color(hex: 0xB91C1C)
+    static let neutralSoft = Color(hex: 0xEEF1F6)
+    static let line = Color(hex: 0xE6EBF3)       // card outlines
+    static let track = Color(hex: 0xF1F4F9)      // code chips
+    // on the navy control card
+    static let onNavy = Color(hex: 0xC6D2E8)
+    static let live = Color(hex: 0x34D399)       // working, saved
+    static let amberOnNavy = Color(hex: 0xF2B544)
+    static let redOnNavy = Color(hex: 0xF87171)
 }
 
 /// The tools live for the whole app, so a tool keeps working while you use another one.

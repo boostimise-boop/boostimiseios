@@ -9,6 +9,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.List
+import androidx.compose.material.icons.automirrored.rounded.Undo
+import androidx.compose.material.icons.rounded.DriveFileRenameOutline
+import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Forum
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
@@ -34,16 +43,35 @@ fun RenameScreen() {
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) t.setFolder(uri)
     }
+    val n = t.rows.size
+    val done = t.rows.count { it.kind in DONE_KINDS }
+    val working = t.rows.firstOrNull { it.kind == "working" }
     Page {
         WaBanner()
-        Section("1  Product list", "Lines like \"6-852 Nubia a56\". Each code is looked up in WhatsApp and the matching " +
-            "photo in your folder is renamed \"6-852 Nubia a56.jpg\".") {
+        ControlCard(waKicker(t.running),
+            when {
+                t.running && working != null -> working.product.label
+                t.running -> "Starting…"
+                n == 0 -> "Paste your product list"
+                done > 0 -> "$done of ${plural(n, "code")} done"
+                else -> "${plural(n, "code")} ready"
+            },
+            if (t.running) working?.text?.takeIf { it.isNotEmpty() } ?: t.activity else t.summary,
+            ringOf(done, n, "done", t.running)) {
+            if (t.running) HeroButton("Stop", Icons.Rounded.Stop, outline = true) { t.stop() }
+            else HeroButton(if (t.dryRun) "Preview" else "Start", Icons.Rounded.PlayArrow, primary = true) { t.start() }
+            if (t.undoWhen.isNotEmpty() && !t.running) {
+                HeroButton("Undo last rename", Icons.AutoMirrored.Rounded.Undo) { askUndo = true }
+            }
+        }
+        Section("Product list", "Lines like \"6-852 Nubia a56\". Each code is looked up in WhatsApp and the matching " +
+            "photo in your folder is renamed \"6-852 Nubia a56.jpg\".", Icons.AutoMirrored.Rounded.List, Tint.NEUTRAL) {
             CodeListBox(t.codeText, { t.codeText = it; t.parse() }, placeholder = "6-852 Nubia a56\n6-853 Redmi 13C")
             if (t.rows.isNotEmpty()) Hint("${t.rows.size} codes in ${t.lists().size} list(s): " + t.lists().joinToString(", ") { it.first })
             if (t.skippedCodes.isNotEmpty()) Hint("No product name, skipped: ${t.skippedCodes.joinToString(", ")}", Brand.WARNING)
         }
-        Section("2  Photo folder", "The folder with the photos to rename. A folder with list folders (\"6-\", \"5a-\") " +
-            "uses each list's own folder.") {
+        Section("Photo folder", "The folder with the photos to rename. A folder with list folders (\"6-\", \"5a-\") " +
+            "uses each list's own folder.", Icons.Rounded.Folder, Tint.ACCENT) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(t.folderLabel.ifEmpty { "No folder chosen" }, Modifier.weight(1f), fontWeight = FontWeight.Medium,
                     color = if (t.folderLabel.isEmpty()) Brand.MUTED else Brand.NAVY)
@@ -52,7 +80,7 @@ fun RenameScreen() {
             Hint("Android asks once to let Boostimise use the folder (\"Use this folder\" › Allow).")
             CheckRow("Include sub folders", t.subFolders, enabled = !t.running) { t.subFolders = it }
         }
-        Section("3  WhatsApp") {
+        Section("WhatsApp", "Where each code's photos are looked up", Icons.Rounded.Forum, Tint.SUCCESS) {
             ChatFilterPicker(t.chat) { t.chat = it }
             CheckRow("A chat for each list (6-, 5a- …)", t.perList, enabled = !t.running) { t.perList = it; if (it) t.autoFillListChats() }
             if (t.perList) ListChats(t.lists(), t.listChats, t.chat) { t.autoFillListChats() }
@@ -62,7 +90,7 @@ fun RenameScreen() {
                 Column(Modifier.weight(1f)) { NumberField("Look back", t.lookbackDays, 1..365, "days") { t.lookbackDays = it } }
             }
         }
-        Section("4  Renaming") {
+        Section("Renaming", icon = Icons.Rounded.Tune, tint = Tint.WARNING) {
             NumberField("Match limit (0 = same file, 10 = normal)", t.threshold, 0..30) { t.threshold = it }
             Hint("One photo becomes \"2-226 Realme P3 Ultra.jpg\"; 2 or more go into a folder \"2-221 Oppo a6 pro 5g\" " +
                 "as img1.jpg, img2.jpg …. Photos already named with a code are renamed again unless they already have " +
@@ -71,19 +99,10 @@ fun RenameScreen() {
             CheckRow("Skip codes whose photo already has its name", t.skipDone, enabled = !t.running) { t.skipDone = it }
             CheckRow("Preview only (nothing is renamed)", t.dryRun, enabled = !t.running) { t.dryRun = it }
         }
-        Section {
-            RunBar(t.running, t.progress, t.activity, t.summary, startLabel = if (t.dryRun) "Preview" else "Start",
-                onStart = { t.start() }, onStop = { t.stop() })
-            if (t.undoWhen.isNotEmpty() && !t.running) TextButton({ askUndo = true }) { Text("Undo last rename (${t.undoWhen})") }
-        }
-        if (t.rows.isNotEmpty()) Section("Results") {
-            for (r in t.rows) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-                StatusDot(r.kind)
-                Spacer(Modifier.width(8.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(r.product.label, fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                    if (r.text.isNotEmpty()) Text(r.text, color = Brand.TEXT_2, fontSize = 12.sp)
-                }
+        if (t.rows.isNotEmpty()) Section("Results", if (t.undoWhen.isNotEmpty()) "Last rename: ${t.undoWhen}" else null,
+            Icons.Rounded.DriveFileRenameOutline, Tint.SUCCESS) {
+            Column(Modifier.fillMaxWidth()) {
+                for (r in t.rows) StatusRow(r.kind, r.product.code, r.product.label.removePrefix(r.product.code).trim(), r.text)
             }
         }
         LogBox(t.log)

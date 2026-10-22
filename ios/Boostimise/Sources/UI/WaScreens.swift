@@ -70,11 +70,12 @@ struct FetchScreen: View {
         @Bindable var t = self.t
         Page {
             WaBanner()
-            Card(title: "1  Codes", hint: codesHint) {
+            FetchControl(t: t)
+            Card(title: "Codes", hint: codesHint, icon: "list.bullet", tint: .neutral) {
                 CodeListBox(text: Binding(get: { t.codeText }, set: { t.codeText = $0; t.parse() }))
-                if !t.rows.isEmpty { Hint("\(t.rows.count) codes") }
+                if !t.rows.isEmpty { Hint(plural(t.rows.count, "code")) }
             }
-            Card(title: "2  Settings") {
+            Card(title: "Settings", hint: "Where to look and how to name the photos", icon: "slider.horizontal.3", tint: .warning) {
                 ChatFilterPicker(filter: $t.chat)
                 CheckRow("A chat for each list (6-, 5a- …)", Binding(get: { t.perList }, set: {
                     t.perList = $0
@@ -91,32 +92,53 @@ struct FetchScreen: View {
                 if let extra { extra }
                 LabeledField(label: "Save in Files › Boostimise ›", text: $t.folder)
             }
-            Card(title: "3  Run") {
-                RunBar(running: t.running, progress: t.progress, activity: t.activity, summary: t.summary,
-                       onStart: { t.start() }, onStop: { t.stop() })
-            }
             if !t.rows.isEmpty {
-                Card(title: "Results") {
-                    ForEach(t.rows) { r in
-                        HStack(spacing: 8) {
-                            StatusDot(kind: r.kind)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text([r.item.code, r.item.name, r.item.date].filter { !$0.isEmpty }.joined(separator: "  "))
-                                    .font(.system(size: 14, weight: .medium)).foregroundStyle(Brand.navy)
-                                if !r.text.isEmpty { Text(r.text).font(.system(size: 12)).foregroundStyle(Brand.text2) }
+                Card(title: "Results", hint: "Saved in \(Storage.displayPath(t.folderName))", icon: "photo.on.rectangle", tint: .success) {
+                    VStack(spacing: 0) {
+                        ForEach(t.rows) { r in
+                            StatusRow(kind: r.kind, code: r.item.code,
+                                      name: [r.item.name, r.item.date].filter { !$0.isEmpty }.joined(separator: "  "), status: r.text) {
+                                if !t.running && ["none", "error", ""].contains(r.kind) { LinkButton("Retry") { t.start(only: [r]) } }
                             }
-                            Spacer()
-                            if !t.running && ["none", "error", ""].contains(r.kind) { LinkButton("Retry") { t.start(only: [r]) } }
                         }
                     }
-                    HStack {
-                        Hint("Saved in \(Storage.displayPath(t.folderName))")
-                        Spacer()
-                        LinkButton("Open") { Storage.openInFiles(t.folderName) }
-                    }
+                    LinkButton("Open in Files") { Storage.openInFiles(t.folderName) }
                 }
             }
             LogBox(log: t.log)
+        }
+    }
+}
+
+/// The control card of Fetch by Code and Fetch & Enhance: the code being read, the counts, Start / Stop.
+private struct FetchControl: View {
+    let t: FetchTool
+
+    var body: some View {
+        let n = t.rows.count
+        let kinds = t.rows.map { $0.kind }
+        let done = kinds.filter { DONE_KINDS.contains($0) }.count
+        let working = t.rows.first { $0.kind == "working" }
+        let title: String = {
+            if t.running, let w = working { return [w.item.code, w.item.name].filter { !$0.isEmpty }.joined(separator: " ") }
+            if t.running { return "Starting…" }
+            if n == 0 { return "Paste your code list" }
+            return done > 0 ? "\(done) of \(plural(n, "code")) done" : "\(plural(n, "code")) ready"
+        }()
+        let workingText = working?.text ?? ""
+        ControlCard(kicker: waKicker(t.running), title: title,
+                    sub: t.running ? (workingText.isEmpty ? t.activity : workingText) : t.summary,
+                    ring: ringOf(done, n, "codes", running: t.running),
+                    counts: [HeroCount(label: "Saved", value: kinds.filter { $0 == "ok" }.count, color: Brand.live),
+                             HeroCount(label: "In progress", value: kinds.filter { $0 == "working" }.count, color: Brand.sky),
+                             HeroCount(label: "Skipped", value: kinds.filter { $0 == "skipped" }.count, color: Brand.onNavy),
+                             HeroCount(label: "No photos", value: kinds.filter { $0 == "none" || $0 == "error" }.count,
+                                       color: Brand.amberOnNavy)]) {
+            if t.running {
+                HeroButton("Stop", icon: "stop.fill", outline: true) { t.stop() }
+            } else {
+                HeroButton("Start", icon: "play.fill", primary: true) { t.start() }
+            }
         }
     }
 }
@@ -150,9 +172,25 @@ private struct ListChats: View {
 struct ReactionListScreen: View {
     var body: some View {
         @Bindable var t = Tools.reactionList
+        let label = t.choice.label
+        let title: String = {
+            if t.running { return "Codes reacted \(label)" }
+            if t.results.isEmpty { return "List the codes reacted \(label)" }
+            return "\(plural(t.results.count, "code")) reacted \(label)"
+        }()
+        let sub: String = t.running ? (t.activity.isEmpty ? "Reading the chats…" : t.activity) : t.summary
+        let share: Double = t.running ? t.progress : (t.results.isEmpty ? 0 : 1)
         Page {
             WaBanner()
-            Card(title: "Reaction") {
+            ControlCard(kicker: waKicker(t.running), title: title, sub: sub,
+                        ring: RingState(share: share, text: "\(t.results.count)", unit: "codes")) {
+                if t.running {
+                    HeroButton("Stop", icon: "stop.fill", outline: true) { t.stop() }
+                } else {
+                    HeroButton(t.withPhotos ? "Fetch list + photos" : "Fetch list", icon: "play.fill", primary: true) { t.start() }
+                }
+            }
+            Card(title: "Reaction", hint: "The codes whose message got it are listed", icon: "face.smiling", tint: .warning) {
                 Flow {
                     ForEach(t.choices, id: \.self) { c in Chip(label: c.label, selected: c.key == t.choice.key) { t.choiceKey = c.key } }
                 }
@@ -163,10 +201,11 @@ struct ReactionListScreen: View {
                     }
                 Hint("😥 also counts 😢 (WhatsApp's built-in sad reaction). Skin tones count as one reaction (👍🏻 = 👍).")
             }
-            Card(title: "Codes (optional)", hint: "Leave empty to list every code that got the reaction in the chats read.") {
+            Card(title: "Codes", hint: "Optional: leave empty to list every code that got the reaction in the chats read.",
+                 icon: "list.bullet", tint: .neutral) {
                 CodeListBox(text: $t.codeText)
             }
-            Card(title: "Settings") {
+            Card(title: "Settings", icon: "slider.horizontal.3") {
                 ChatFilterPicker(filter: $t.chat)
                 NumberField(label: "Look back", value: $t.lookbackDays, range: 1...365, suffix: "days")
                 Text("Fetch").font(.system(size: 12)).foregroundStyle(Brand.text2)
@@ -181,28 +220,21 @@ struct ReactionListScreen: View {
                          "reaction gets all its photos; otherwise only the photos with the reaction.")
                 }
             }
-            Card {
-                RunBar(running: t.running, progress: t.progress, activity: t.activity, summary: t.summary,
-                       startLabel: t.withPhotos ? "Fetch list + photos" : "Fetch list",
-                       onStart: { t.start() }, onStop: { t.stop() })
-            }
             if !t.results.isEmpty {
-                Card(title: "\(t.results.count) codes") {
-                    HStack(spacing: 8) {
+                Card(title: plural(t.results.count, "code"), hint: "Reacted \(label)", icon: "checkmark.circle", tint: .success) {
+                    Flow(spacing: 8) {
                         PrimaryButton("Copy list") { copyText(t.formatList()) }
                         SecondaryButton("Save .txt") { saveText("Reaction list \(dateText(Date(), "dd-MM-yyyy")).txt", t.formatList()) }
                     }
-                    ForEach(Array(t.results.enumerated()), id: \.element.id) { n, f in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(n + 1). \(f.code) \(f.name) \(f.react(t.shown, t.labels))").font(.system(size: 15, weight: .medium))
-                                .foregroundStyle(Brand.navy)
-                            if !f.phones.isEmpty { Text(f.phones.joined(separator: ", ")).font(.system(size: 13)) }
-                            Text(f.chats.joined(separator: ", ")).font(.system(size: 12)).foregroundStyle(Brand.muted)
-                            if !f.photos.isEmpty { Text("Photos: \(f.photos)").font(.system(size: 12)).foregroundStyle(Brand.text2) }
+                    VStack(spacing: 0) {
+                        ForEach(Array(t.results.enumerated()), id: \.element.id) { n, f in
+                            let emojis = f.react(t.shown)
+                            let labelled = f.react(t.shown, t.labels)
+                            StatusRow(kind: "ok", code: f.code, name: f.name, status: f.phones.joined(separator: ", "),
+                                      badge: emojis.isEmpty ? "\(n + 1)" : emojis,
+                                      more: [labelled != emojis ? labelled : "", f.chats.joined(separator: ", "),
+                                             f.photos.isEmpty ? "" : "Photos: \(f.photos)"])
                         }
-                        .padding(6)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(n % 2 == 0 ? Brand.bg : Brand.surface)
                     }
                     if t.results.contains(where: { !$0.photos.isEmpty }) {
                         HStack {

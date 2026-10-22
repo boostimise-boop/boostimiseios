@@ -11,6 +11,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.List
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.EmojiEmotions
+import androidx.compose.material.icons.rounded.PhotoLibrary
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
@@ -90,14 +98,14 @@ fun WhatsAppHeader() {
 fun FetchScreen(t: FetchTool,
                 codesHint: String = "Lines like \"2-558  Realme C85  26/9\" - the photos are saved as \"2-558 Realme C85.jpg\".",
                 extra: @Composable ColumnScope.() -> Unit = {}) {
-    val ctx = LocalContext.current
     Page {
         WaBanner()
-        Section("1  Codes", codesHint) {
+        FetchControl(t)
+        Section("Codes", codesHint, Icons.AutoMirrored.Rounded.List, Tint.NEUTRAL) {
             CodeListBox(t.codeText, { t.codeText = it; t.parse() })
-            if (t.rows.isNotEmpty()) Hint("${t.rows.size} codes")
+            if (t.rows.isNotEmpty()) Hint(plural(t.rows.size, "code"))
         }
-        Section("2  Settings") {
+        Section("Settings", "Where to look and how to name the photos", Icons.Rounded.Tune, Tint.WARNING) {
             ChatFilterPicker(t.chat) { t.chat = it }
             CheckRow("A chat for each list (6-, 5a- …)", t.perList) { t.perList = it; if (it) t.autoFillListChats() }
             if (t.perList) ListChats(t.lists(), t.listChats, t.chat) { t.autoFillListChats() }
@@ -112,23 +120,42 @@ fun FetchScreen(t: FetchTool,
             androidx.compose.material3.OutlinedTextField(t.folder, { t.folder = it }, label = { Text("Save in Pictures/Boostimise/") },
                 singleLine = true, modifier = Modifier.fillMaxWidth())
         }
-        Section("3  Run") {
-            RunBar(t.running, t.progress, t.activity, t.summary, onStart = { t.start() }, onStop = { t.stop() })
-        }
-        if (t.rows.isNotEmpty()) Section("Results") {
-            for (r in t.rows) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                StatusDot(r.kind)
-                Spacer(Modifier.width(8.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(listOf(r.item.code, r.item.name, r.item.date).filter { it.isNotEmpty() }.joinToString("  "),
-                        fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                    if (r.text.isNotEmpty()) Text(r.text, color = Brand.TEXT_2, fontSize = 12.sp)
-                }
-                if (!t.running && r.kind in setOf("none", "error", "")) TextButton({ t.start(listOf(r)) }) { Text("Retry") }
+        if (t.rows.isNotEmpty()) Section("Results", "Saved in the gallery: Pictures/Boostimise/${t.folder}",
+            Icons.Rounded.PhotoLibrary, Tint.SUCCESS) {
+            Column(Modifier.fillMaxWidth()) {
+                for (r in t.rows) StatusRow(r.kind, r.item.code, listOf(r.item.name, r.item.date).filter { it.isNotEmpty() }
+                    .joinToString("  "), r.text,
+                    trailing = if (!t.running && r.kind in setOf("none", "error", "")) {
+                        { TextButton({ t.start(listOf(r)) }) { Text("Retry") } }
+                    } else null)
             }
-            Hint("Saved in the gallery: Pictures/Boostimise/${t.folder}")
         }
         LogBox(t.log)
+    }
+}
+
+/** The control card of Fetch by Code and Fetch & Enhance: the code being read, the counts, Start / Stop. */
+@Composable
+private fun FetchControl(t: FetchTool) {
+    val n = t.rows.size
+    val kinds = t.rows.map { it.kind }
+    val done = kinds.count { it in DONE_KINDS }
+    val working = t.rows.firstOrNull { it.kind == "working" }
+    val title = when {
+        t.running && working != null -> listOf(working.item.code, working.item.name).filter { it.isNotEmpty() }.joinToString(" ")
+        t.running -> "Starting…"
+        n == 0 -> "Paste your code list"
+        done > 0 -> "$done of ${plural(n, "code")} done"
+        else -> "${plural(n, "code")} ready"
+    }
+    val sub = if (t.running) working?.text?.takeIf { it.isNotEmpty() } ?: t.activity else t.summary
+    ControlCard(waKicker(t.running), title, sub, ringOf(done, n, "codes", t.running), listOf(
+        Count("Saved", kinds.count { it == "ok" }, Brand.LIVE),
+        Count("In progress", kinds.count { it == "working" }, Brand.SKY),
+        Count("Skipped", kinds.count { it == "skipped" }, Brand.ON_NAVY),
+        Count("No photos", kinds.count { it == "none" || it == "error" }, Brand.AMBER_ON_NAVY))) {
+        if (t.running) HeroButton("Stop", Icons.Rounded.Stop, outline = true) { t.stop() }
+        else HeroButton("Start", Icons.Rounded.PlayArrow, primary = true) { t.start() }
     }
 }
 
@@ -154,9 +181,21 @@ fun ReactionListScreen() {
     val t = Tools.reactionList
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    val label = t.choice.label
     Page {
         WaBanner()
-        Section("Reaction") {
+        ControlCard(waKicker(t.running),
+            when {
+                t.running -> "Codes reacted $label"
+                t.results.isNotEmpty() -> "${plural(t.results.size, "code")} reacted $label"
+                else -> "List the codes reacted $label"
+            },
+            if (t.running) t.activity.ifEmpty { "Reading the chats…" } else t.summary,
+            RingState(if (t.running) t.progress else if (t.results.isNotEmpty()) 1f else 0f, "${t.results.size}", "codes")) {
+            if (t.running) HeroButton("Stop", Icons.Rounded.Stop, outline = true) { t.stop() }
+            else HeroButton(if (t.withPhotos) "Fetch list + photos" else "Fetch list", Icons.Rounded.PlayArrow, primary = true) { t.start() }
+        }
+        Section("Reaction", "The codes whose message got it are listed", Icons.Rounded.EmojiEmotions, Tint.WARNING) {
             Chips {
                 for (c in t.choices) {
                     if (c.key == t.choice.key) Button({ }) { Text(c.label) } else OutlinedButton({ t.choiceKey = c.key }) { Text(c.label) }
@@ -167,10 +206,11 @@ fun ReactionListScreen() {
                 singleLine = true, enabled = !t.running, modifier = Modifier.fillMaxWidth())
             Hint("😥 also counts 😢 (WhatsApp's built-in sad reaction). Skin tones count as one reaction (👍🏻 = 👍).")
         }
-        Section("Codes (optional)", "Leave empty to list every code that got the reaction in the chats read.") {
+        Section("Codes", "Optional: leave empty to list every code that got the reaction in the chats read.",
+            Icons.AutoMirrored.Rounded.List, Tint.NEUTRAL) {
             CodeListBox(t.codeText, { t.codeText = it })
         }
-        Section("Settings") {
+        Section("Settings", icon = Icons.Rounded.Tune, tint = Tint.ACCENT) {
             ChatFilterPicker(t.chat) { t.chat = it }
             CheckRow("A chat for each list (6-, 5a- …)", t.perList, enabled = !t.running) { t.perList = it; if (it) t.autoFillListChats() }
             if (t.perList) ListChats(remember(t.codeText) { t.lists() }, t.listChats, t.chat) { t.autoFillListChats() }
@@ -189,11 +229,8 @@ fun ReactionListScreen() {
                     "reaction gets all its photos; otherwise only the photos with the reaction.")
             }
         }
-        Section {
-            RunBar(t.running, t.progress, t.activity, t.summary, startLabel = if (t.withPhotos) "Fetch list + photos" else "Fetch list", onStart = { t.start() }, onStop = { t.stop() })
-        }
-        if (t.results.isNotEmpty()) Section("${t.results.size} codes") {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (t.results.isNotEmpty()) Section(plural(t.results.size, "code"), "Reacted $label", Icons.Rounded.CheckCircle, Tint.SUCCESS) {
+            Chips {
                 Button({ copy(ctx, t.formatList()) }) { Text("Copy list") }
                 OutlinedButton({
                     scope.launch {
@@ -201,12 +238,13 @@ fun ReactionListScreen() {
                     }
                 }) { Text("Save .txt") }
             }
-            t.results.forEachIndexed { n, f ->
-                Column(Modifier.fillMaxWidth().background(if (n % 2 == 0) Brand.BG else Brand.SURFACE).padding(6.dp)) {
-                    Text("${n + 1}. ${f.code} ${f.name} ${f.react(t.shown, t.labels)}", fontWeight = FontWeight.Medium)
-                    if (f.phones.isNotEmpty()) Text(f.phones.joinToString(", "), fontSize = 13.sp)
-                    Text(f.chats.joinToString(", "), color = Brand.MUTED, fontSize = 12.sp)
-                    if (f.photos.isNotEmpty()) Text("Photos: ${f.photos}", color = Brand.TEXT_2, fontSize = 12.sp)
+            Column(Modifier.fillMaxWidth()) {
+                t.results.forEachIndexed { n, f ->
+                    val emojis = f.react(t.shown)
+                    val labelled = f.react(t.shown, t.labels)
+                    StatusRow("ok", f.code, f.name, f.phones.joinToString(", "), badge = emojis.ifEmpty { "${n + 1}" },
+                        more = listOf(if (labelled != emojis) labelled else "", f.chats.joinToString(", "),
+                            if (f.photos.isNotEmpty()) "Photos: ${f.photos}" else ""))
                 }
             }
             if (t.results.any { it.photos.isNotEmpty() }) Hint("Photos saved in the gallery: Pictures/Boostimise/${t.folder}")

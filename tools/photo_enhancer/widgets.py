@@ -1160,7 +1160,7 @@ class EnhancementControls(QWidget):
         box.add(W.v_col(title, self.apply_text, spacing=4), 1)
         lay.addWidget(box)
 
-        self.button = W.Button("ENHANCE PHOTO", "wand-2", "gradient", "2xl", full=True, weight=700)
+        self.button = W.Button("ENHANCE PHOTO", "wand-2", "brand", "2xl", full=True, weight=700)
         self.button.clicked.connect(self.enhance)
         W.shadow(self.button, blur=24, dy=8, alpha=.25, color=W.BLUE)
         lay.addWidget(self.button)

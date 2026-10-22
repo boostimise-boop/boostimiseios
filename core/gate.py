@@ -64,7 +64,7 @@ def _card(padding: int = 32, spacing: int = 20) -> W.Box:
 
 class SignInPage(W.WebPage):
     def __init__(self):
-        super().__init__(glow=480)
+        super().__init__()
         self.account = acc.get()
         col = QWidget()
         col.setStyleSheet("background: transparent;")
@@ -162,7 +162,7 @@ class OnboardingPage(W.WebPage):
     """Step 2 of 2: the mobile number, required once after the first sign-in."""
 
     def __init__(self):
-        super().__init__(glow=480)
+        super().__init__()
         self.account = acc.get()
         col = QWidget()
         col.setStyleSheet("background: transparent;")
@@ -207,7 +207,7 @@ class OnboardingPage(W.WebPage):
 
 class BlockedPage(W.WebPage):
     def __init__(self):
-        super().__init__(glow=480)
+        super().__init__()
         self.account = acc.get()
         col = QWidget()
         col.setStyleSheet("background: transparent;")
@@ -247,7 +247,7 @@ class UpdatePage(W.WebPage):
     """This copy may not run right now; shows why, the new version and how to get it."""
 
     def __init__(self):
-        super().__init__(glow=480)
+        super().__init__()
         self.guard = gd.get()
         self.url: str | None = None
         col = QWidget()
@@ -313,7 +313,7 @@ class UpdatePage(W.WebPage):
 
 class LoadingPage(W.WebPage):
     def __init__(self):
-        super().__init__(glow=0)
+        super().__init__()
         lay = QVBoxLayout(self)
         lay.addStretch(1)
         lay.addLayout(W.h_row(None, W.Spinner(24, W.PRIMARY), None))

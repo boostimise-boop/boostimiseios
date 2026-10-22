@@ -26,8 +26,8 @@ import os
 import sys
 import traceback
 
-from PySide6.QtCore import QPoint, QRectF, QSettings, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QKeySequence, QLinearGradient, QPainter, QPainterPath, QShortcut
+from PySide6.QtCore import QPoint, QPointF, QRectF, QSettings, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QKeySequence, QPainter, QPainterPath, QShortcut
 from PySide6.QtWidgets import (
     QAbstractButton, QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPlainTextEdit,
     QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
@@ -38,26 +38,26 @@ from tools import TOOLS, Tool
 from . import account as acc
 from . import guard as gd
 from . import theme, ui, webui
-from .account_widgets import AccountChip, account_menu
+from .account_widgets import AccountChip, SidebarQuota, account_menu
 from .gate import Gate
 from .paths import DATA_DIR
 
 log = logging.getLogger("allinone")
 
-SIDEBAR_TOP = "#15284d"     # the logo's navy, lighter at the top
-SIDEBAR_BOTTOM = "#0a1429"
 HOVER_BG = QColor(255, 255, 255, 20)
-TEXT = "#c6d2e8"
-MUTED = "#7f90b0"
-BUSY = "#34d399"
-WIDE, NARROW = 240, 68
+ICON_BG = QColor(255, 255, 255, 16)  # the square behind a tool's icon
+TEXT = theme.ON_NAVY
+MUTED = theme.ON_NAVY_MUTED
+BUSY = theme.LIVE
+WIDE, NARROW = 252, 76
 AUTO_COLLAPSE_BELOW = 1180  # window width (px) under which the sidebar folds to icons by itself
 MIN_WINDOW = QSize(720, 480)
 SHORTCUTS = 9  # Ctrl+1 ... Ctrl+9 for the first nine tools
 
 
 class NavButton(QAbstractButton):
-    """A sidebar entry: icon, title and a green dot while the tool is working."""
+    """A sidebar entry: its icon in a small square, the title and a green dot while the tool is
+    working. The open tool is a white pill with a blue icon square."""
 
     def __init__(self, icon: str, title: str, checkable=True):
         super().__init__()
@@ -93,35 +93,34 @@ class NavButton(QAbstractButton):
     def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        box = QRectF(self.rect()).adjusted(10, 3, -10, -3)
+        if self.collapsed:
+            box = QRectF(self.width() / 2 - 26, 2, 52, self.height() - 4)
+        else:
+            box = QRectF(self.rect()).adjusted(10, 2, -10, -2)
         checked, hover = self.isChecked(), self.underMouse()
         if checked or hover:
             path = QPainterPath()
-            path.addRoundedRect(box, 10, 10)
-            if checked:
-                fill = QLinearGradient(box.topLeft(), box.bottomRight())
-                fill.setColorAt(0, QColor(theme.ACCENT))
-                fill.setColorAt(1, QColor(theme.ACCENT_2))
-                p.fillPath(path, fill)
-            else:
-                p.fillPath(path, HOVER_BG)
-        color = "#ffffff" if checked or hover else TEXT
-        ratio = self.devicePixelRatioF()
-        pm = theme.icon_pixmap(self.icon_name, color, 18, ratio)
-        icon_x = box.center().x() - 9 if self.collapsed else box.left() + 13
-        p.drawPixmap(int(icon_x), int(box.center().y() - 9), pm)
+            path.addRoundedRect(box, 12, 12)
+            if not (checked and self.collapsed):  # folded sidebar: the blue icon square alone
+                p.fillPath(path, QColor(theme.SURFACE) if checked else HOVER_BG)
+        square = QRectF(box.center().x() - 14 if self.collapsed else box.left() + 7, box.center().y() - 14, 28, 28)
+        path = QPainterPath()
+        path.addRoundedRect(square, 8, 8)
+        p.fillPath(path, QColor(theme.ACCENT) if checked else ICON_BG)
+        pm = theme.icon_pixmap(self.icon_name, "#ffffff" if checked or hover else TEXT, 17, self.devicePixelRatioF())
+        p.drawPixmap(QPointF(square.center().x() - 8.5, square.center().y() - 8.5), pm)
         if not self.collapsed:
-            p.setPen(QColor(color))
+            p.setPen(QColor(theme.NAVY if checked else "#ffffff" if hover else TEXT))
             font = QFont(self.font())
             font.setPointSizeF(10)
-            font.setWeight(QFont.DemiBold if checked else QFont.Normal)
+            font.setWeight(QFont.Bold if checked else QFont.Medium)
             p.setFont(font)
-            text_box = box.adjusted(44, 0, -24, 0)
+            text_box = QRectF(square.right() + 12, box.top(), box.right() - square.right() - 36, box.height())
             p.drawText(text_box, Qt.AlignVCenter | Qt.AlignLeft,
                        p.fontMetrics().elidedText(self.title, Qt.ElideRight, int(text_box.width())))
         if self.busy:
-            dot = (QRectF(icon_x + 14, box.center().y() - 13, 8, 8) if self.collapsed
-                   else QRectF(box.right() - 18, box.center().y() - 4, 8, 8))
+            dot = (QRectF(square.right() - 4, square.top() - 4, 9, 9) if self.collapsed
+                   else QRectF(box.right() - 20, box.center().y() - 4, 8, 8))
             p.setPen(Qt.NoPen)
             p.setBrush(QColor(52, 211, 153, 70))
             p.drawEllipse(dot.adjusted(-3, -3, 3, 3))
@@ -138,14 +137,13 @@ class Sidebar(QFrame):
     def __init__(self, tools: list[Tool]):
         super().__init__(objectName="sidebar")
         self.setStyleSheet(f"""
-            QFrame#sidebar {{ background: qlineargradient(x1:0, y1:0, x2:0.35, y2:1,
-                                stop:0 {SIDEBAR_TOP}, stop:1 {SIDEBAR_BOTTOM}); }}
+            QFrame#sidebar {{ background: {theme.NAVY}; }}
             QLabel {{ background: transparent; }}
             QLabel#appname {{ color: #ffffff; font-size: 13pt; font-weight: 700; }}
             QLabel#tagline {{ color: {MUTED}; font-size: 8.5pt; }}
             QLabel#section {{ color: {MUTED}; font-size: 8pt; font-weight: 700; letter-spacing: 1.5px;
-                              padding: 14px 0 4px 22px; }}
-            QFrame#rule {{ background: rgba(255, 255, 255, 28); margin: 12px 18px 6px 18px; }}
+                              padding: 10px 0 4px 22px; }}
+            QFrame#rule {{ background: rgba(255, 255, 255, 28); margin: 6px 18px 6px 18px; }}
             QFrame#footrule {{ background: rgba(255, 255, 255, 22); margin: 0 16px 6px 16px; }}
             QLabel#version {{ color: {MUTED}; font-size: 8pt; padding: 2px 0 8px 22px; }}
             QScrollArea#navscroll, QWidget#nav {{ background: transparent; border: none; }}
@@ -219,6 +217,8 @@ class Sidebar(QFrame):
         foot = QFrame(objectName="footrule")
         foot.setFixedHeight(1)
         lay.addWidget(foot)
+        self.quota = SidebarQuota()
+        lay.addWidget(self.quota)
         self.account_chip = AccountChip(self.account_clicked.emit)
         lay.addWidget(self.account_chip)
         self.data_btn = NavButton("folder", "Open data folder", checkable=False)
@@ -240,7 +240,7 @@ class Sidebar(QFrame):
             w.setVisible(not collapsed)
         for w in self.narrow_only:
             w.setVisible(collapsed)
-        for btn in [*self.buttons.values(), self.data_btn, self.collapse_btn, self.account_chip]:
+        for btn in [*self.buttons.values(), self.data_btn, self.collapse_btn, self.account_chip, self.quota]:
             btn.set_collapsed(collapsed)
         self.collapse_btn.icon_name = "expand" if collapsed else "collapse"
         self.collapse_btn.title = "Expand sidebar" if collapsed else "Collapse sidebar"

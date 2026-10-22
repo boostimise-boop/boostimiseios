@@ -188,7 +188,7 @@ def guest_id() -> str:
 _PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{title} - Boostimise</title>
 <meta name="viewport" content="width=device-width, initial-scale=1"><style>
 body{{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:"Segoe UI",system-ui,sans-serif;
-background:#fff;color:#0b1730;background-image:radial-gradient(60% 50% at 50% 0%,rgba(33,123,244,.16),transparent 70%)}}
+background:#fff;color:#0b1730}}
 main{{text-align:center;padding:24px;max-width:360px}}h1{{font-size:20px;font-weight:600;margin:16px 0 8px}}
 p{{font-size:14px;color:#62748e;line-height:1.5;margin:0}}.b{{font-weight:700}}.b span{{color:#0062e9}}</style></head>
 <body><main>{icon}<h1>{title}</h1><p>{text}</p><p style="margin-top:24px" class="b">Boost<span>imise</span></p></main>{script}</body></html>"""

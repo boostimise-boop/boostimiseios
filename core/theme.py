@@ -14,18 +14,18 @@ from .paths import ASSETS
 # packaging/build.py reads these four lines (name, publisher, version of the exe and the setup).
 APP_NAME = "Boostimise"
 APP_PUBLISHER = "Boostimise"
-APP_VERSION = "4.5.1"
+APP_VERSION = "4.6.0"
 APP_ID = "Boostimise.Boostimise"  # Windows taskbar grouping; the setup's shortcuts use the same id
 APP_TAGLINE = "WA Photos • Enhance • Rename • Match"
 APP_NAME_BLUE = "imise"  # the end of the name, which the logo's wordmark writes in blue
 
-# Colours, from the logo (assets/logo.png): a navy "B" around a blue photo, with blue sparkles. The brand
-# gradient is the wordmark's blue -> deep blue (the selected tool, main buttons).
-NAVY = "#0f1d3a"             # the logo's "B": the sidebar, text
-SKY = "#1ea0ff"              # the photo's light blue (the name's blue part on the navy sidebar)
-ACCENT = "#0a6cf0"           # the sparkles' blue
+# Colours, from the logo (assets/logo.png): a navy "B" around a blue photo, with blue sparkles. Every
+# colour is solid: the app uses no gradients.
+NAVY = "#0f1d3a"             # the logo's "B": the sidebar, the dark control cards, text
+SKY = "#1ea0ff"              # the photo's light blue (the name's blue part, buttons on navy)
+ACCENT = "#0a6cf0"           # the sparkles' blue: main buttons, the selected tool's icon
 ACCENT_HOVER = "#0858d8"
-ACCENT_2 = "#0447cf"         # second stop of the brand gradient
+ACCENT_2 = "#0447cf"         # pressed main buttons
 ACCENT_SOFT = "#e8f2ff"      # tint behind hovered / checked things
 ACCENT_DARK = "#0a46a8"      # text on ACCENT_SOFT
 BG = "#f3f6fb"               # page background
@@ -39,6 +39,15 @@ MUTED = "#8b96ab"
 SUCCESS = "#16a34a"
 WARNING = "#c27803"
 ERROR = "#dc2626"
+# Soft backgrounds (icon squares, status labels) and the darker text that reads on them.
+SUCCESS_SOFT, SUCCESS_DARK = "#e7f6ec", "#137a39"
+WARNING_SOFT, WARNING_DARK = "#fff3dc", "#8a5300"
+ERROR_SOFT, ERROR_DARK = "#fdecec", "#b91c1c"
+NEUTRAL_SOFT = "#eef1f6"
+# On the navy sidebar and control cards.
+ON_NAVY = "#c6d2e8"          # text
+ON_NAVY_MUTED = "#7f90b0"    # section titles, the version
+LIVE = "#34d399"             # a tool that is working, "Live"
 
 # Small glyphs the style sheet draws (combo / spin box arrows, check marks), in assets/.
 UI_ICONS = ("chevron-down.svg", "chevron-up.svg", "check.svg")
@@ -149,10 +158,6 @@ def light_palette() -> QPalette:
     return p
 
 
-def _gradient(a: str = ACCENT, b: str = ACCENT_2) -> str:
-    return f"qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {a}, stop:1 {b})"
-
-
 # One look for every tool. A page's own style sheet only adds what is special to it (its labels,
 # a progress bar's height...); rules a page sets itself win over these.
 STYLESHEET = f"""
@@ -171,10 +176,10 @@ QPushButton:hover {{ background: {ACCENT_SOFT}; border-color: #9cc5fb; color: {A
 QPushButton:pressed {{ background: #d5e7ff; }}
 QPushButton:checked {{ background: {ACCENT_SOFT}; border-color: {ACCENT}; color: {ACCENT_DARK}; }}
 QPushButton:disabled {{ background: #f3f4f8; color: #aab0c0; border-color: #e7e9f0; }}
-QPushButton#primary, QPushButton#accent {{ background: {_gradient()}; color: #ffffff; border: none;
+QPushButton#primary, QPushButton#accent {{ background: {ACCENT}; color: #ffffff; border: none;
               font-weight: 600; padding: 6px 18px; }}
-QPushButton#primary:hover, QPushButton#accent:hover {{ background: {_gradient(ACCENT_HOVER, "#033bb3")}; color: #ffffff; }}
-QPushButton#primary:pressed, QPushButton#accent:pressed {{ background: {ACCENT_HOVER}; }}
+QPushButton#primary:hover, QPushButton#accent:hover {{ background: {ACCENT_HOVER}; color: #ffffff; }}
+QPushButton#primary:pressed, QPushButton#accent:pressed {{ background: {ACCENT_2}; }}
 QPushButton#primary:disabled, QPushButton#accent:disabled {{ background: #b3d1fa; color: #ffffff; }}
 
 QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QComboBox {{ background: {SURFACE}; color: {TEXT};
@@ -233,8 +238,7 @@ QTabBar::tab:selected {{ color: {ACCENT}; border-bottom-color: {ACCENT}; }}
 
 QProgressBar {{ background: #eaecf4; border: none; border-radius: 7px; text-align: center; color: {TEXT};
               font-weight: 600; min-height: 14px; }}
-QProgressBar::chunk {{ border-radius: 7px; background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-              stop:0 #5fb8ff, stop:1 #4a8ff5); }}
+QProgressBar::chunk {{ border-radius: 7px; background: {SKY}; }}
 
 QScrollArea {{ background: transparent; border: none; }}
 QAbstractScrollArea::corner {{ background: transparent; border: none; }}

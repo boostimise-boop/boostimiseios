@@ -9,15 +9,14 @@ import os
 import queue
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QTextBlockFormat, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
-    QBoxLayout, QCheckBox, QComboBox, QFileDialog, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSpinBox,
-    QTextEdit, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QFileDialog, QGridLayout, QLabel, QLineEdit, QMessageBox, QSizePolicy, QSpinBox, QTextEdit,
+    QVBoxLayout, QWidget,
 )
 
-from core import shop, theme
+from core import look, shop, theme
 
 from .engine import (APP_TITLE, DATA_DIR, LOG_DIR, SETTINGS_FILE, Worker, group_label, list_folder, list_groups,
                      parse_products)
@@ -36,18 +35,6 @@ HELP = [
     "Tip: tick \"Preview only\" the first time to see what would happen without renaming anything.",
 ]
 LOG_COLORS = {"ok": "#15803d", "warn": "#b45309", "err": "#c0392b", "dim": theme.TEXT_2}
-ACCENT = theme.ACCENT
-
-# The look comes from core/theme.py; only what is special to this page is here.
-STYLE = f"""
-QWidget#renamer {{ background: {theme.BG}; }}
-QScrollArea, QWidget#settings {{ background: transparent; border: none; }}
-QProgressBar {{ min-height: 8px; max-height: 8px; border-radius: 4px; }}
-QProgressBar::chunk {{ border-radius: 4px; }}
-QLabel#step {{ font-weight: 600; color: {theme.TEXT}; }}
-QLabel#hint {{ color: {theme.TEXT_2}; }}
-QLabel#warn {{ color: {theme.WARNING}; }}
-"""
 
 
 def shop_chat(group: str) -> str:
@@ -70,9 +57,8 @@ class RenamerPage(QWidget):
     busy_changed = Signal(bool)
 
     def __init__(self):
-        super().__init__(objectName="renamer")
-        self.setAttribute(Qt.WA_StyledBackground)
-        self.setStyleSheet(STYLE)
+        super().__init__()
+        self.setStyleSheet(look.STYLE)
         self.ui = queue.Queue()
         self.worker = Worker(self.ui)
         self.worker.start()
@@ -86,7 +72,7 @@ class RenamerPage(QWidget):
         self.list_boxes = []
         self.groups = []         # groups of the current file, bottom list first
         self.groups_data = {}
-        self.mode = None         # "wide", "medium" or "narrow" (page width)
+        self.mode = "wide"       # "wide", "medium" or "narrow" (page width)
 
         self._build()
         self.txt_edit.setText(s.get("txt", ""))
@@ -106,196 +92,106 @@ class RenamerPage(QWidget):
         self.poll_timer.timeout.connect(self._poll)
         self.poll_timer.start()
 
-    # ---- layout
+    # ---- layout: the look of core/look.py
     def _build(self):
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(12, 6, 12, 12)
-        outer.setSpacing(6)
+        self.b_open = look.button("Open WhatsApp", "outline", "message-circle", theme.NAVY)
+        self.b_open.clicked.connect(self._open_whatsapp)
 
-        # Settings: they get a scroll bar when the window is too short for them
-        self.body = QWidget(objectName="settings")
-        self.body_lay = QHBoxLayout(self.body)
-        self.body_lay.setContentsMargins(0, 0, 4, 0)
-        self.area = QScrollArea(widgetResizable=True, frameShape=QFrame.NoFrame)
-        self.area.setWidget(self.body)
-        self.area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        outer.addWidget(self.area)
+        self.hero = look.Hero("done", hint_text="")
+        self.pb = self.hero.progress
+        self.lbl_status = self.hero.title  # the worker's status line is the control card's title
+        self.b_start = look.button("Start", "heroStart", "play", theme.NAVY)
+        self.b_start.clicked.connect(self._start)
+        self.b_stop = look.button("Stop", "heroOutline", "square", "#ffffff")
+        self.b_stop.setEnabled(False)
+        self.b_stop.clicked.connect(self._stop)
+        self.b_undo = look.button("Undo last rename", "heroGhost", "undo-2", "#ffffff")
+        self.b_undo.clicked.connect(self._undo)
+        self.b_reset = look.button("Reset", "heroGhost", "rotate-ccw", "#ffffff")
+        self.b_reset.clicked.connect(self._reset)
+        self.hero.add(self.b_start, self.b_stop, self.b_undo, self.b_reset)
 
-        self.sec_in = QWidget()
-        self.grid_in = QGridLayout(self.sec_in)
-        self.grid_in.setContentsMargins(0, 8, 0, 0)
-        self.grid_in.setColumnStretch(1, 1)
-        self.lbl_txt = QLabel("1. Product code list (.txt)", objectName="step")
+        # 1, 2: the product list and the day folder
+        files = look.Card("file-text", theme.ACCENT_SOFT, theme.ACCENT, "Product list and photos",
+                          "Each list uses its own folder in the day folder: the 6- list the folder \"6-\" …")
         self.txt_edit = QLineEdit()
-        self.btn_txt = QPushButton("Browse…")
+        self.btn_txt = look.button("Browse", "mini")
         self.btn_txt.clicked.connect(self._pick_txt)
-        self.lbl_codes = QLabel(objectName="hint")
-        self.lbl_codes.setWordWrap(True)
-        self.lbl_folder = QLabel("2. Day folder with the photos", objectName="step")
+        self.lbl_codes = QLabel(objectName="hint", wordWrap=True)
         self.folder_edit = QLineEdit()
-        self.btn_folder = QPushButton("Browse…")
+        self.btn_folder = look.button("Browse", "mini")
         self.btn_folder.clicked.connect(self._pick_folder)
-        self.rec_check = QCheckBox("Include all subfolders")
-        self.box_lists = QGroupBox("3. WhatsApp chat for each list (done from the bottom list up)")
-        lists_lay = QVBoxLayout(self.box_lists)
+        self.rec_check = look.ToggleRow("folder", theme.NEUTRAL_SOFT, theme.NAVY, "Include all subfolders")
+        files.lay.addLayout(look.column(look.field("Product code list (.txt)"),
+                                        look.path_box(self.txt_edit, self.btn_txt, icon="file-text"), self.lbl_codes))
+        files.lay.addLayout(look.column(look.field("Day folder with the photos"),
+                                        look.path_box(self.folder_edit, self.btn_folder), self.rec_check))
+
+        # 3: the chat of each list
+        self.box_lists = look.Card("message-circle", theme.SUCCESS_SOFT, theme.SUCCESS, "WhatsApp chat for each list",
+                                   "Done from the bottom list up")
         self.lists_frame = QWidget()
         self.lists_grid = QGridLayout(self.lists_frame)
         self.lists_grid.setContentsMargins(0, 0, 0, 0)
-        self.lists_grid.setVerticalSpacing(3)
-        lists_lay.addWidget(self.lists_frame)
-        hint = QLabel('"Open WhatsApp" fills these in (chat names with "(6-)", "(5a-)" …). '
-                      'You can also choose or type a chat.', objectName="hint")
-        hint.setWordWrap(True)
-        lists_lay.addWidget(hint)
+        self.lists_grid.setHorizontalSpacing(10)
+        self.lists_grid.setVerticalSpacing(8)
+        self.box_lists.lay.addWidget(self.lists_frame)
+        self.box_lists.lay.addWidget(look.hint('"Open WhatsApp" fills these in (chat names with "(6-)", "(5a-)" …). '
+                                               'You can also choose or type a chat.'))
 
-        self.sec_opt = QGroupBox("Options")
-        self.opt_grid = QGridLayout(self.sec_opt)
-        self.opt_grid.setRowStretch(2, 1)  # keep the options at the top of a tall box
-        self.opt_a, self.opt_b = QWidget(), QWidget()
-        a = QVBoxLayout(self.opt_a)
-        a.setContentsMargins(0, 0, 0, 0)
-        r1 = QHBoxLayout()
-        r1.addWidget(QLabel("Match strictness"))
+        # options
+        self.sec_opt = look.Card("sliders-horizontal", theme.WARNING_SOFT, theme.WARNING, "Options")
         self.threshold_spin = QSpinBox()
         self.threshold_spin.setRange(0, 30)
-        r1.addWidget(self.threshold_spin)
-        r1.addWidget(QLabel("(lower = stricter)", objectName="hint"))
-        r1.addStretch(1)
-        a.addLayout(r1)
-        r2 = QHBoxLayout()
-        r2.addWidget(QLabel("Search at most"))
+        self.threshold_spin.setToolTip("Lower = stricter")
         self.max_spin = QSpinBox()
         self.max_spin.setRange(100, 100000)
         self.max_spin.setSingleStep(500)
-        r2.addWidget(self.max_spin)
-        r2.addWidget(QLabel("messages per chat"))
-        r2.addStretch(1)
-        a.addLayout(r2)
-        self.neighbors_check = QCheckBox("Also use caption-less photos sent next to the code")
-        a.addWidget(self.neighbors_check)
-        b = QVBoxLayout(self.opt_b)
-        b.setContentsMargins(0, 0, 0, 0)
-        multi = QLabel('One photo becomes "2-226 Realme P3 Ultra.jpg"; 2 or more go into a folder '
-                       '"2-221 Oppo a6 pro 5g" as img1.jpg, img2.jpg …', objectName="hint")
-        multi.setWordWrap(True)
-        b.addWidget(multi)
-        self.note_check = QCheckBox("Add the (note) from the WhatsApp caption")
-        b.addWidget(self.note_check)
-        self.dry_check = QCheckBox("Preview only (change nothing)")
-        b.addWidget(self.dry_check)
+        self.max_spin.setSuffix(" messages")
+        self.sec_opt.lay.addLayout(look.row(look.column(look.field("Match strictness (lower = stricter)"),
+                                                        self.threshold_spin),
+                                            look.column(look.field("Search at most, per chat"), self.max_spin),
+                                            spacing=10))
+        self.neighbors_check = look.ToggleRow("image", theme.ACCENT_SOFT, theme.ACCENT, "Also use caption-less photos",
+                                              "Sent next to the code")
+        self.note_check = look.ToggleRow("message-circle", theme.WARNING_SOFT, theme.WARNING, "Add the (note)",
+                                         "From the WhatsApp caption")
+        self.dry_check = look.ToggleRow("scan-search", theme.NEUTRAL_SOFT, theme.NAVY, "Preview only",
+                                        "Change nothing")
+        self.sec_opt.lay.addLayout(look.column(self.neighbors_check, self.note_check, self.dry_check, spacing=2))
+        self.sec_opt.lay.addWidget(look.hint('One photo becomes "2-226 Realme P3 Ultra.jpg"; 2 or more go into a folder '
+                                             '"2-221 Oppo a6 pro 5g" as img1.jpg, img2.jpg …'))
 
-        # Buttons, progress and status
-        self.bar = QGridLayout()
-        self.bar.setColumnStretch(0, 1)
-        self.bar_left, self.bar_right = QHBoxLayout(), QHBoxLayout()
-        self.b_open = QPushButton("Open WhatsApp")
-        self.b_open.clicked.connect(self._open_whatsapp)
-        self.b_start = QPushButton("Start", objectName="primary")
-        self.b_start.clicked.connect(self._start)
-        self.b_stop = QPushButton("Stop")
-        self.b_stop.setEnabled(False)
-        self.b_stop.clicked.connect(self._stop)
-        for w in (self.b_open, self.b_start, self.b_stop):
-            self.bar_left.addWidget(w)
-        self.bar_left.addStretch(1)
-        self.b_undo = QPushButton("Undo last rename")
-        self.b_undo.clicked.connect(self._undo)
-        self.b_reset = QPushButton("Reset")
-        self.b_reset.clicked.connect(self._reset)
-        self.bar_right.addWidget(self.b_undo)
-        self.bar_right.addWidget(self.b_reset)
-        self.bar_right.addStretch(1)
-        self.pb = QProgressBar()
-        self.pb.setTextVisible(False)
-        self.pb.setRange(0, 1)
-        self.pb.setValue(0)
-        self.lbl_status = QLabel("Ready.")
-        self.lbl_status.setWordWrap(True)
-        outer.addLayout(self.bar)
-
-        # Log: takes all the height that is left
+        # the log: takes all the height that is left
         self.log_view = QTextEdit(readOnly=True)
         self.log_view.setFont(QFont(["Segoe UI", "Nirmala UI"], 10))
-        self.log_view.setMinimumHeight(60)
-        outer.addWidget(self.log_view, 1)
-        self._layout("wide")
+        self.log_card = look.LogCard(self.log_view, height=200, grow=True)
+
+        self.look = look.ToolLayout(
+            look.Header("match_renamer", [self.b_open]), self.hero,
+            [("files", files), ("lists", self.box_lists), ("options", self.sec_opt)], [(self.log_card, 1)],
+            [("files", "Files"), ("lists", "Chats"), ("options", "Options"), ("log", "Log")], "log",
+            left_width=(430, 380), on_mode=self._layout)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(self.look)
+        self._show_status()
 
     def _layout(self, mode):
-        """Arrange the page for its width. wide: options on the right; medium: options below
-        in two columns; narrow: everything in one column, labels above their boxes."""
         self.mode = mode
-        narrow = mode == "narrow"
-        for lay in (self.body_lay, self.opt_grid, self.grid_in, self.bar):
-            while lay.count():
-                item = lay.takeAt(0)
-                if item.layout():
-                    item.layout().setParent(None)  # so it can be added again below
-        self.body_lay.setDirection(QBoxLayout.Direction.LeftToRight if mode == "wide"
-                                   else QBoxLayout.Direction.TopToBottom)
-        self.body_lay.addWidget(self.sec_in, 1)
-        self.body_lay.addWidget(self.sec_opt, 0)
-
-        if mode == "medium":
-            self.opt_grid.addWidget(self.opt_a, 0, 0, Qt.AlignTop)
-            self.opt_grid.addWidget(self.opt_b, 0, 1, Qt.AlignTop)
-            self.opt_grid.setColumnStretch(1, 1)
-        else:
-            self.opt_grid.addWidget(self.opt_a, 0, 0, Qt.AlignTop)
-            self.opt_grid.addWidget(self.opt_b, 1, 0, Qt.AlignTop)
-            self.opt_grid.setColumnStretch(1, 0)
-
-        g = self.grid_in
-        if narrow:
-            g.addWidget(self.lbl_txt, 0, 0, 1, 3)
-            g.addWidget(self.txt_edit, 1, 0, 1, 2)
-            g.addWidget(self.btn_txt, 1, 2)
-            g.addWidget(self.lbl_codes, 2, 0, 1, 3)
-            g.addWidget(self.lbl_folder, 3, 0, 1, 3)
-            g.addWidget(self.folder_edit, 4, 0, 1, 2)
-            g.addWidget(self.btn_folder, 4, 2)
-            g.addWidget(self.rec_check, 5, 0, 1, 3)
-            g.addWidget(self.box_lists, 6, 0, 1, 3)
-        else:
-            g.addWidget(self.lbl_txt, 0, 0)
-            g.addWidget(self.txt_edit, 0, 1)
-            g.addWidget(self.btn_txt, 0, 2)
-            g.addWidget(self.lbl_codes, 1, 1, 1, 2)
-            g.addWidget(self.lbl_folder, 2, 0)
-            g.addWidget(self.folder_edit, 2, 1)
-            g.addWidget(self.btn_folder, 2, 2)
-            g.addWidget(self.rec_check, 3, 1)
-            g.addWidget(self.box_lists, 4, 0, 1, 3)
-
-        self.bar.addLayout(self.bar_left, 0, 0)
-        if narrow:
-            self.bar.addLayout(self.bar_right, 1, 0)
-        else:
-            self.bar.addLayout(self.bar_right, 0, 1)
-        self.bar.addWidget(self.pb, 2, 0, 1, 2)
-        self.bar.addWidget(self.lbl_status, 3, 0, 1, 2)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        width = event.size().width()
-        mode = "wide" if width >= 980 else "medium" if width >= 680 else "narrow"
-        if mode != self.mode:
-            self._layout(mode)
-            self._build_lists(self.groups_data)
-        QTimer.singleShot(0, self._fit_height)
+        self.look.resize_to(event.size().width())
 
-    def _fit_height(self):
-        """Settings get the height they need, but the log always keeps some room;
-        when the page is too short the settings scroll instead."""
-        need = self.body.sizeHint().height() + 4
-        bar = self.bar.sizeHint().height()
-        room = self.height() - bar - 40 - 130  # padding, then the log
-        height = max(min(need, room), min(need, 140))
-        if self.area.height() != height:
-            self.area.setFixedHeight(height)
+    def _show_status(self):
+        busy = self.busy
+        self.hero.set_status("WORKING" if busy else "READY", theme.LIVE if busy else theme.SKY,
+                             self.lbl_status.text() or "Ready.", self.lbl_codes.text())
 
     def _build_lists(self, groups):
         """One row per list in the file: tick box, its codes, the WhatsApp chat and its folder.
-        On a narrow page the codes go on a second line."""
+        The card is a column of the page, so the codes go on a second line."""
         while self.lists_grid.count():
             item = self.lists_grid.takeAt(0)
             if item.widget():
@@ -303,14 +199,13 @@ class RenamerPage(QWidget):
         self.list_boxes = []
         self.groups_data = groups
         self.groups = list(groups)
-        narrow = self.mode == "narrow"
+        narrow = True
         chat_col = 1 if narrow else 2
         for c in range(4):
             self.lists_grid.setColumnStretch(c, 1 if c == chat_col else 0)
         day = self.folder_edit.text().strip()
         if not groups:
             self.lists_grid.addWidget(QLabel("Choose the product list first.", objectName="hint"), 0, 0, 1, 4)
-            QTimer.singleShot(0, self._fit_height)
             return
         for i, (g, ps) in enumerate(groups.items()):
             if g not in self.list_vars:
@@ -328,7 +223,7 @@ class RenamerPage(QWidget):
             box.setInsertPolicy(QComboBox.NoInsert)
             box.addItems(self.chat_names)
             box.setCurrentText(v["chat"])
-            box.setMinimumContentsLength(16 if narrow else 30)
+            box.setMinimumContentsLength(14)
             box.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
             box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             box.editTextChanged.connect(lambda text, v=v: v.__setitem__("chat", text))
@@ -342,7 +237,6 @@ class RenamerPage(QWidget):
             else:
                 self.lists_grid.addWidget(codes, row, 1)
             self.list_boxes.append(box)
-        QTimer.singleShot(0, self._fit_height)
 
     # ---- helpers
     def _show_help(self):
@@ -388,6 +282,7 @@ class RenamerPage(QWidget):
         self.lbl_codes.setText(text)
         self.lbl_codes.setVisible(bool(text))
         self._build_lists(groups)
+        self._show_status()
 
     def _pick_txt(self):
         p, _ = QFileDialog.getOpenFileName(self, "Product code list", os.path.dirname(self.txt_edit.text()),
@@ -485,6 +380,7 @@ class RenamerPage(QWidget):
         self.pb.setRange(0, 1)
         self.pb.setValue(0)
         self.lbl_status.setText("Ready.")
+        self._show_status()
         self._save_settings()
 
     def is_busy(self) -> bool:
@@ -496,6 +392,7 @@ class RenamerPage(QWidget):
         for w in (self.b_open, self.b_start, self.b_undo, self.b_reset):
             w.setEnabled(not busy)
         self.b_stop.setEnabled(busy)
+        self._show_status()
 
     def _got_chats(self, names, found):
         self.chat_names = list(names)
@@ -522,6 +419,7 @@ class RenamerPage(QWidget):
                     self._log(*val)
                 elif kind == "status":
                     self.lbl_status.setText(val)
+                    self._show_status()
                 elif kind == "busy":
                     self._set_busy(val)
                 elif kind == "chats":

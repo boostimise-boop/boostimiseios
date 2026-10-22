@@ -1,7 +1,7 @@
 """Account pieces shared by the pages: the quota pill, the mobile-number form with its country
-picker, the daily-limit / suspended dialog, the "change mobile number" dialog and the account
-chip at the bottom of the sidebar (components/QuotaPill.tsx, PhoneForm.tsx, CountrySelect.tsx,
-LimitDialog.tsx, dashboard/EditPhoneDialog.tsx, UserMenu.tsx).
+picker, the daily-limit / suspended dialog, the "change mobile number" dialog, and the quota card
+and account chip at the bottom of the sidebar (components/QuotaPill.tsx, PhoneForm.tsx,
+CountrySelect.tsx, LimitDialog.tsx, dashboard/EditPhoneDialog.tsx, UserMenu.tsx).
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import account as acc
-from . import net, supabase
+from . import net, supabase, theme
 from . import webui as W
 from .paths import ASSETS
 
@@ -61,9 +61,7 @@ class QuotaPill(QFrame):
         self.icon.set("infinity" if unlimited else "zap", fg)
         self.text.setText(text)
         W.set_color(self.text, fg)
-        self.setToolTip("Your account has no daily limit" if unlimited else
-                        f"{q.used} used today · resets in {acc.format_reset_in(q.resets_at)}"
-                        + (" · sign in for more" if q.kind == "guest" else ""))
+        self.setToolTip(quota_tooltip(q))
 
 
 # ---- countries & flags ------------------------------------------------------------------------
@@ -396,6 +394,72 @@ class LimitDialog(W.WebDialog):
 
 
 # ---- the account chip in the sidebar ----------------------------------------------------------
+def quota_tooltip(q: acc.Quota) -> str:
+    return ("Your account has no daily limit" if q.remaining is None else
+            f"{q.used} used today · resets in {acc.format_reset_in(q.resets_at)}"
+            + (" · sign in for more" if q.kind == "guest" else ""))
+
+
+class SidebarQuota(QWidget):
+    """The day's enhancements on the navy sidebar: "16 of 20 left today" over a sky-blue bar of
+    what is left. Hidden while the sidebar is folded to icons, or without a quota."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(62)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.collapsed = False
+        self.account = acc.get()
+        self.account.changed.connect(self._refresh)
+        self._refresh()
+
+    def set_collapsed(self, collapsed: bool):
+        self.collapsed = collapsed
+        self._refresh()
+
+    def _refresh(self):
+        q = self.account.quota
+        self.setVisible(q is not None and not self.collapsed)
+        self.setToolTip(quota_tooltip(q) if q is not None else "")
+        self.update()
+
+    def paintEvent(self, _):
+        q = self.account.quota
+        if q is None:
+            return
+        p = QPainter(self)
+        p.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+        box = QRectF(self.rect()).adjusted(10, 4, -10, -6)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(255, 255, 255, 15))
+        p.drawRoundedRect(box, 14, 14)
+        unlimited = q.remaining is None
+        icon = W.icon_pixmap("infinity" if unlimited else "zap", theme.SKY, 14, max(2.0, W.dpr()))
+        p.drawPixmap(QRectF(box.left() + 12, box.top() + 11, 14, 14), icon, QRectF(icon.rect()))
+        if unlimited:
+            bold, rest = "Unlimited", " enhancements"
+        else:
+            bold, rest = f"{q.remaining} of {q.limit}", " free left today" if q.kind == "guest" else " left today"
+        x = box.left() + 34
+        p.setFont(W.font(12.5, 600))
+        p.setPen(QColor("#ffffff"))
+        p.drawText(QRectF(x, box.top() + 8, box.width(), 20), Qt.AlignLeft | Qt.AlignVCenter, bold)
+        x += p.fontMetrics().horizontalAdvance(bold)
+        p.setFont(W.font(12.5))
+        p.setPen(QColor(theme.ON_NAVY))
+        p.drawText(QRectF(x, box.top() + 8, box.right() - x - 8, 20), Qt.AlignLeft | Qt.AlignVCenter, rest)
+        bar = QRectF(box.left() + 12, box.bottom() - 16, box.width() - 24, 5)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(255, 255, 255, 30))
+        p.drawRoundedRect(bar, 2.5, 2.5)
+        share = 1.0 if unlimited else (q.remaining or 0) / max(1, q.limit or 1)
+        if share > 0:
+            p.setBrush(QColor(theme.SKY))
+            p.drawRoundedRect(QRectF(bar.left(), bar.top(), max(bar.height(), bar.width() * min(1.0, share)),
+                                     bar.height()), 2.5, 2.5)
+        p.end()
+
+
 class AccountChip(QAbstractButton):
     """Avatar, name and plan at the bottom of the (navy) sidebar; click for the account menu."""
 
@@ -417,7 +481,9 @@ class AccountChip(QAbstractButton):
 
     def _refresh(self):
         u = self.account.display_user() or {}
-        self.setToolTip(f"{u.get('name') or 'Your account'}\n{u.get('email') or ''}")
+        q = self.account.quota
+        self.setToolTip(f"{u.get('name') or 'Your account'}\n{u.get('email') or ''}"
+                        + (f"\n{quota_tooltip(q)}" if q is not None else ""))
         self.update()
 
     def enterEvent(self, e):
@@ -434,15 +500,15 @@ class AccountChip(QAbstractButton):
         p = QPainter(self)
         p.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
         box = QRectF(self.rect()).adjusted(10, 4, -10, -4)
-        if self.underMouse():
+        if self.underMouse() or not self.collapsed:
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor(255, 255, 255, 20))
-            p.drawRoundedRect(box, 10, 10)
-        size = 30
+            p.setBrush(QColor(255, 255, 255, 26 if self.underMouse() else 10))
+            p.drawRoundedRect(box, 14, 14)
+        size = 32
         x = box.center().x() - size / 2 if self.collapsed else box.left() + 8
         r = QRectF(x, box.center().y() - size / 2, size, size)
         clip = QPainterPath()
-        clip.addEllipse(r)
+        clip.addRoundedRect(r, 10, 10)
         p.save()
         p.setClipPath(clip)
         if a.avatar_image is not None:
@@ -450,13 +516,13 @@ class AccountChip(QAbstractButton):
                                         Qt.SmoothTransformation)
             p.drawImage(r, img)
         else:
-            p.fillRect(r, QColor("#2a3c66"))
-            p.setPen(QColor("#ffffff"))
-            p.setFont(W.font(11, 700))
+            p.fillRect(r, QColor(theme.SKY))
+            p.setPen(QColor(theme.NAVY))
+            p.setFont(W.font(12, 800))
             p.drawText(r, Qt.AlignCenter, W.initials_of(u.get("name"), u.get("email")))
         p.restore()
-        dot = QColor("#34d399") if a.realtime_state == "subscribed" and not a.offline else QColor("#7f90b0")
-        p.setPen(QPen(QColor("#0f1d3a"), 2))
+        dot = QColor(theme.LIVE) if a.realtime_state == "subscribed" and not a.offline else QColor(theme.ON_NAVY_MUTED)
+        p.setPen(QPen(QColor(theme.NAVY), 2))
         p.setBrush(dot)
         p.drawEllipse(QRectF(r.right() - 9, r.bottom() - 9, 10, 10))
         if not self.collapsed:
@@ -469,13 +535,9 @@ class AccountChip(QAbstractButton):
             p.drawText(QRectF(tx, r.top() - 1, width, 18), Qt.AlignLeft | Qt.AlignVCenter,
                        p.fontMetrics().elidedText(name, Qt.ElideRight, int(width)))
             p.setFont(W.font(11.5))
-            p.setPen(QColor("#7f90b0"))
+            p.setPen(QColor(theme.ON_NAVY_MUTED))
+            # the plan only: the day's quota is on the card above (and in the tooltip)
             sub = "Offline" if a.offline else (a.plan["name"] if a.plan else "Free account")
-            q = a.quota
-            if q is not None and q.remaining is None and not a.offline:
-                sub += " · Unlimited"
-            elif q is not None and not a.offline:
-                sub += f" · {q.remaining} left today"
             p.drawText(QRectF(tx, r.top() + 16, width, 16), Qt.AlignLeft | Qt.AlignVCenter,
                        p.fontMetrics().elidedText(sub, Qt.ElideRight, int(width)))
         p.end()

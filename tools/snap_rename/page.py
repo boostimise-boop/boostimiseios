@@ -76,8 +76,7 @@ QPushButton {{ background: {SURFACE}; color: {TEXT_PRIMARY}; border: 1px solid {
               padding: 7px 12px; font-size: 9pt; }}
 QPushButton:hover {{ background: {ACCENT_SOFT}; border-color: #9cc5fb; color: {theme.ACCENT_DARK}; }}
 QPushButton:disabled {{ color: {TEXT_MUTED}; }}
-QPushButton#accent {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {ACCENT}, stop:1 {theme.ACCENT_2});
-              color: #ffffff; border: none; font-weight: 700; padding: 8px 14px; }}
+QPushButton#accent {{ background: {ACCENT}; color: #ffffff; border: none; font-weight: 700; padding: 8px 14px; }}
 QPushButton#accent:hover {{ background: {ACCENT_HOVER}; color: #ffffff; }}
 QFrame#card {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 12px; }}
 QFrame#card:hover {{ border-color: #b3d1fa; }}

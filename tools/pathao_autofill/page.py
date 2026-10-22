@@ -21,15 +21,14 @@ import queue
 from datetime import datetime
 
 from PySide6.QtCore import QEvent, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QKeySequence, QShortcut
+from PySide6.QtGui import QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
-    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
-    QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSplitter, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QAbstractItemView, QApplication, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow,
+    QMessageBox, QPlainTextEdit, QSizePolicy, QTableWidget, QTableWidgetItem, QWidget,
 )
 
-from core import shell, shop, theme
+from core import look, shell, shop, theme
+from core.look import KIND
 from core.ui import FlowLayout
 
 from .autofill_engine import (
@@ -38,29 +37,20 @@ from .autofill_engine import (
 )
 from .order_parser import read_code_list, split_code
 
-ROW_COLORS = {FETCHING: "#fff6d6", FILLED: "#fff6d6", SAVED: "#dcfce7", SAVED_EARLIER: "#effaf1",
-              IN_PATHAO: "#effaf1", NOT_FOUND: "#fee2e2"}
-BANNER_COLORS = {"info": (theme.ACCENT_SOFT, theme.ACCENT_DARK), "busy": ("#fff6d6", "#5c4700"), "wait": ("#e9eef5", "#2c3e5a"),
-                 "ok": ("#dcfce7", "#14532d"), "warn": ("#fee2e2", "#7a1010")}
+# a code's status as a row kind (core/look.py KINDS): its square and colour in the list
+ROW_KINDS = {FETCHING: "working", FILLED: "working", SAVED: "ok", SAVED_EARLIER: "ok", IN_PATHAO: "ok",
+             NOT_FOUND: "none", SKIPPED: "skipped"}
+# set_state's levels: the control card's top line and its colour on navy
+LEVELS = {"info": ("READY", theme.SKY), "busy": ("WORKING", theme.LIVE), "wait": ("CHECK PATHAO AND SAVE", theme.SKY),
+          "ok": ("DONE", theme.LIVE), "warn": ("NEEDS YOU", look.AMBER_ON_NAVY)}
 COLUMNS = ["Code", "Status", "Name", "Phone", "Phone 2", "Amount"]
-STACK_BELOW = 860  # window width (px) under which the order card moves below the code list
 NARROW_TABLE = 520  # table width (px) under which Phone 2 and Amount are hidden (the order card shows them)
 
-# The look comes from core/theme.py; only what is special to this page is here.
-STYLE = f"""
-QMainWindow, QWidget#root {{ background: {theme.BG}; }}
-QTableWidget::item:selected {{ background: {theme.ACCENT_SOFT}; color: {theme.TEXT}; }}
-QProgressBar {{ min-width: 170px; min-height: 20px; }}
-QScrollArea {{ border: none; }}
+STYLE = look.STYLE + f"""
+QLabel#orderCode {{ color: {theme.ACCENT}; font-size: 22px; font-weight: 800; }}
+QPlainTextEdit#message {{ background: {theme.SURFACE_ALT}; border: 1px solid {look.LINE}; border-radius: 12px;
+    padding: 8px 10px; }}
 """
-
-
-class Page(QWidget):
-    """The window's contents. It asks for the height its layout needs at a given width (wrapped rows
-    included), so the scroll area around it only scrolls when the window is too small to show it all."""
-
-    def heightForWidth(self, width):
-        return self.layout().minimumHeightForWidth(width)
 
 
 class MainWindow(QMainWindow):
@@ -89,205 +79,157 @@ class MainWindow(QMainWindow):
         self.pump_timer.start()
         # A fresh start doesn't load the list of the last session: Load / Reload or Start does.
 
-    # -- layout ------------------------------------------------------------
+    # -- layout: the look of core/look.py ---------------------------------
     def _build(self):
         self.setWindowTitle("WhatsApp to Pathao auto-fill")
-        self.setMinimumSize(320, 260)
-        # Rows of controls wrap onto more lines as the window narrows; when even that doesn't fit,
-        # the scroll area scrolls instead of cutting the window off.
-        root = Page(objectName="root")
-        scroll = QScrollArea(widgetResizable=True, frameShape=QFrame.NoFrame)
-        scroll.setWidget(root)
-        self.setCentralWidget(scroll)
-        outer = QVBoxLayout(root)
-        outer.setContentsMargins(12, 4, 12, 12)
-        outer.setSpacing(8)
-
-        self.setup_box = QGroupBox("Setup")
-        sv = QVBoxLayout(self.setup_box)
-        row = FlowLayout()
-        row.addWidget(QLabel("Code list"))
-        self.path_edit = QLineEdit(self.settings["list_file"])
-        self.path_edit.setMinimumWidth(220)
-        row.addWidget(self.path_edit)
-        browse = QPushButton("Browse...")
-        browse.clicked.connect(self.browse)
-        row.addWidget(browse)
-        load = QPushButton("Load / Reload")
-        load.clicked.connect(self.load_list)
-        row.addWidget(load)
-        sv.addLayout(row)
-
-        row = FlowLayout(hspace=16)
-        connect = QPushButton("Open / Connect browser")
+        self.setMinimumWidth(320)  # no least height: a short window scrolls the page (core/ui.py ScrollPage)
+        self.browser_pill = look.WaPill()
+        connect = look.button("Open / Connect browser", "outline", "globe", theme.NAVY)
         connect.clicked.connect(lambda: self.send("connect"))
-        row.addWidget(connect)
-        self.browser_lbl = QLabel("Browser: not connected yet")
-        self.browser_lbl.setStyleSheet(f"color: {theme.ERROR};")
-        row.addWidget(self.browser_lbl)
-        row.addStretch()
-        self.bottom_check = QCheckBox("Start from bottom of the file")
-        self.bottom_check.setChecked(self.settings["start_from_bottom"])
-        self.bottom_check.toggled.connect(lambda _: self.codes and self.load_list())  # re-sort a loaded list
-        row.addWidget(self.bottom_check)
-        self.top_check = QCheckBox("Keep this window on top")
-        self.top_check.setChecked(self.settings.get("always_on_top", False))
-        self.top_check.toggled.connect(self.set_on_top)
-        row.addWidget(self.top_check)
-        self.phone_check = QCheckBox("Write phone in the list after Save")
-        self.phone_check.setToolTip('After each save, the phone is added next to its code in the list file\n'
-                                    '("3-620<TAB>  01814120910"), which marks the code as done there.')
-        self.phone_check.setChecked(self.settings.get("write_phone_to_list", True))
-        self.phone_check.toggled.connect(lambda _: self.push_settings())
-        row.addWidget(self.phone_check)
-        sv.addLayout(row)
-        outer.addWidget(self.setup_box)
+        self.setup_btn = look.button("Setup", "outline",
+                                     tip="Show or hide the Setup and chat-name cards (hide them to fit a small window)")
+        self.setup_btn.setCheckable(True)
+        self.setup_btn.setChecked(self.settings.get("show_setup", True))
+        self.setup_btn.toggled.connect(self.show_setup)
+        self._show_browser("Browser: not connected yet", False)
 
-        self.chat_box = QGroupBox("WhatsApp chat name for each code prefix")
-        self.chat_flow = FlowLayout(self.chat_box, hspace=16, vspace=8)
-        outer.addWidget(self.chat_box)
-
-        bar = FlowLayout()
-        start = QPushButton("▶  Start", objectName="primary")
-        start.setToolTip("F5")
+        # the run: progress, what is happening, the buttons (with their keys)
+        self.hero = look.Hero("saved", [("saved", "Saved", theme.LIVE), ("todo", "To do", theme.SKY),
+                                        ("none", "Not found", look.RED_ON_NAVY)], hint_text="")
+        self.progress = self.hero.progress
+        start = look.button("Start", "heroStart", "play", theme.NAVY, "F5")
         start.clicked.connect(self.start)
-        bar.addWidget(start)
-        for text, cmd, key in [("⏸  Pause", "pause", "F6"), ("✓  Saved → Next", "mark_saved", "F8"),
-                               ("⏭  Skip", "skip", "F9"), ("↻  Read WhatsApp again", "refetch", None)]:
-            b = QPushButton(text)
+        self.hero.add(start)
+        for text, icon, cmd, key in [("Pause", "pause", "pause", "F6"), ("Saved → Next", "check-check", "mark_saved", "F8"),
+                                     ("Skip", "skip-forward", "skip", "F9"),
+                                     ("Read WhatsApp again", "refresh-cw", "refetch", None)]:
+            b = look.button(text, "heroGhost", icon, "#ffffff", key or "")
             b.clicked.connect(lambda _=False, c=cmd: self.send(c))
             if key:
-                b.setToolTip(key)
                 QShortcut(QKeySequence(key), self, activated=lambda c=cmd: self.send(c))
-            bar.addWidget(b)
-        check = QPushButton("🔍  Check Pathao")
+            self.hero.add(b)
+        check = look.button("Check Pathao", "heroGhost", "search", "#ffffff")
         check.setToolTip("Finds which codes of the list already have a Pathao order (the code is its Merchant\n"
                          "Order ID; only orders since the prefix's codes last started again from 1),\n"
                          "marks them as saved with that order's phone and, when 'Write phone\n"
                          "in the list' is on, writes the phone next to each of them in the list file.")
         check.clicked.connect(self.check_pathao)
-        bar.addWidget(check)
+        self.hero.add(check)
         QShortcut(QKeySequence("F5"), self, activated=self.start)
-        bar.addStretch()
-        self.progress = QProgressBar()
-        self.progress.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self.progress.setFormat("Saved %v / %m")
-        self.progress.setRange(0, 1)
-        self.progress.setValue(0)
-        bar.addWidget(self.progress)
-        reset = QPushButton("Reset saved history")
-        reset.clicked.connect(self.reset_history)
-        bar.addWidget(reset)
-        self.setup_btn = QPushButton("⚙  Setup", checkable=True)
-        self.setup_btn.setToolTip("Show or hide the Setup and chat-name boxes (hide them to fit a small window)")
-        self.setup_btn.setChecked(self.settings.get("show_setup", True))
-        self.setup_btn.toggled.connect(self.show_setup)
-        bar.addWidget(self.setup_btn)
-        outer.addLayout(bar)
 
-        self.banner = QLabel(wordWrap=True)
-        self.banner.setMinimumHeight(38)
-        outer.addWidget(self.banner)
-        self.set_state("Load the code list, then press Start.", "info")
-
-        self.split = QSplitter(Qt.Horizontal, childrenCollapsible=False)  # turns vertical in a narrow window
-        left = QWidget()
-        lv = QVBoxLayout(left)
-        lv.setContentsMargins(0, 0, 0, 0)
-        self.table = QTableWidget(0, len(COLUMNS))
-        self.table.setMinimumHeight(100)
-        self.table.installEventFilter(self)
-        self.table.setHorizontalHeaderLabels(COLUMNS)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.setShowGrid(False)
-        header = self.table.horizontalHeader()
-        for col, mode in enumerate([QHeaderView.ResizeToContents, QHeaderView.ResizeToContents, QHeaderView.Stretch,
-                                    QHeaderView.ResizeToContents, QHeaderView.ResizeToContents,
-                                    QHeaderView.ResizeToContents]):
-            header.setSectionResizeMode(col, mode)
-        self.table.cellDoubleClicked.connect(self.on_double_click)
-        lv.addWidget(self.table)
-        hint = QLabel("Double-click a code to fill it now.")
-        hint.setStyleSheet(f"color: {theme.TEXT_2};")
-        lv.addWidget(hint)
-        self.split.addWidget(left)
-
-        self.card = card = QGroupBox("Current order")
-        card.installEventFilter(self)
-        cv = QVBoxLayout(card)
-        top = FlowLayout(hspace=8)
-        self.panel_lbl = QLabel("-")
-        self.panel_lbl.setStyleSheet(f"font-size: 20px; font-weight: 700; color: {theme.ACCENT};")
-        top.addWidget(self.panel_lbl)
-        top.addStretch()
-        fill = QPushButton("Fill Pathao with these values")
-        fill.clicked.connect(self.refill)
-        top.addWidget(fill)
-        copy_btn = QPushButton("Copy message")
-        copy_btn.clicked.connect(self.copy_message)
-        top.addWidget(copy_btn)
-        cv.addLayout(top)
-        form = QFormLayout()
+        # the order on the Pathao form
+        self.card = card = look.Card("package", theme.ACCENT_SOFT, theme.ACCENT, "Current order",
+                                     "Double-click a code to fill it now")
+        self.panel_lbl = QLabel("-", objectName="orderCode")
+        card.head_right.addWidget(self.panel_lbl, 0, Qt.AlignTop)
         self.field_edits = {}
         for key, title in [("name", "Name"), ("phone", "Phone"), ("phone2", "Phone 2"), ("address", "Address"),
                            ("amount", "Amount to collect")]:
             if key == "address":
-                edit = QPlainTextEdit()
+                edit = QPlainTextEdit(objectName="codes")
                 edit.setTabChangesFocus(True)
-                edit.setFixedHeight(64)
+                edit.setFixedHeight(70)
             else:
-                edit = QLineEdit()
-            form.addRow(title, edit)
+                edit = QLineEdit(objectName="field")
             self.field_edits[key] = edit
-        cv.addLayout(form)
-        cv.addWidget(QLabel("WhatsApp message"))
-        self.msg_view = QPlainTextEdit(readOnly=True)
+        f = self.field_edits
+        card.lay.addLayout(look.column(look.field("Name"), f["name"]))
+        card.lay.addLayout(look.row(look.column(look.field("Phone"), f["phone"]),
+                                    look.column(look.field("Phone 2"), f["phone2"]), spacing=10))
+        card.lay.addLayout(look.column(look.field("Address"), f["address"]))
+        card.lay.addLayout(look.column(look.field("Amount to collect"), f["amount"]))
+        self.msg_view = QPlainTextEdit(readOnly=True, objectName="message")
         self.msg_view.setFont(QFont(["Nirmala UI", "Segoe UI"], 11))
-        self.msg_view.setMinimumHeight(48)
-        cv.addWidget(self.msg_view, 1)
-        self.split.addWidget(card)
-        self.split.setStretchFactor(0, 3)
-        self.split.setStretchFactor(1, 2)
+        self.msg_view.setMinimumHeight(90)
+        card.lay.addLayout(look.column(look.field("WhatsApp message"), self.msg_view))
+        fill = look.button("Fill Pathao with these values", "soft", "truck")
+        fill.clicked.connect(self.refill)
+        copy_btn = look.button("Copy message", "plain", "copy", theme.TEXT_2)
+        copy_btn.clicked.connect(self.copy_message)
+        card.lay.addLayout(look.row(fill, copy_btn, None))
 
-        # The log sits under a splitter handle: drag it to resize the log, or all the way down to hide it.
-        self.log_view = QPlainTextEdit(readOnly=True)
+        # setup
+        self.setup_box = look.Card("sliders-horizontal", theme.WARNING_SOFT, theme.WARNING, "Setup")
+        self.path_edit = QLineEdit(self.settings["list_file"])
+        browse = look.button("Browse", "mini")
+        browse.clicked.connect(self.browse)
+        load = look.button("Load / Reload", "mini")
+        load.clicked.connect(self.load_list)
+        self.setup_box.lay.addLayout(look.column(look.field("Code list"),
+                                                 look.path_box(self.path_edit, browse, load, icon="file-text")))
+        self.bottom_check = look.ToggleRow("list", theme.NEUTRAL_SOFT, theme.NAVY, "Start from the bottom of the file")
+        self.bottom_check.setChecked(self.settings["start_from_bottom"])
+        self.bottom_check.toggled.connect(lambda _: self.codes and self.load_list())  # re-sort a loaded list
+        self.top_check = look.ToggleRow("maximize", theme.ACCENT_SOFT, theme.ACCENT, "Keep this window on top",
+                                        "Above the browser while this tool is open")
+        self.top_check.setChecked(self.settings.get("always_on_top", False))
+        self.top_check.toggled.connect(self.set_on_top)
+        self.phone_check = look.ToggleRow("phone", theme.SUCCESS_SOFT, theme.SUCCESS, "Write the phone in the list",
+                                          "After each Save")
+        self.phone_check.setToolTip('After each save, the phone is added next to its code in the list file\n'
+                                    '("3-620<TAB>  01814120910"), which marks the code as done there.')
+        self.phone_check.setChecked(self.settings.get("write_phone_to_list", True))
+        self.phone_check.toggled.connect(lambda _: self.push_settings())
+        self.setup_box.lay.addLayout(look.column(self.bottom_check, self.top_check, self.phone_check, spacing=2))
+        reset = look.button("Reset saved history", "plain", "rotate-ccw", theme.TEXT_2)
+        reset.clicked.connect(self.reset_history)
+        self.setup_box.lay.addLayout(look.row(None, reset))
+
+        self.chat_box = look.Card("message-circle", theme.SUCCESS_SOFT, theme.SUCCESS, "Chat for each code prefix",
+                                  "The WhatsApp chat each prefix's order messages are in")
+        chats = QWidget()
+        self.chat_flow = FlowLayout(chats, hspace=10, vspace=8)
+        self.chat_box.lay.addWidget(chats)
+
+        # the codes
+        codes = look.Card("list", theme.NEUTRAL_SOFT, theme.NAVY, "Codes", "Double-click a code to fill it now")
+        codes.lay.setContentsMargins(18, 18, 18, 10)
+        self.table = QTableWidget(0, len(COLUMNS))
+        self.table.setMinimumHeight(100)
+        self.table.installEventFilter(self)
+        self.table.setHorizontalHeaderLabels(COLUMNS)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        look.rows_table(self.table, {0: "code", 1: "status", 2: "name", 4: "muted", 5: "muted"}, 1, height=50)
+        header = self.table.horizontalHeader()
+        for col, mode in enumerate([QHeaderView.ResizeToContents, QHeaderView.Stretch, QHeaderView.Stretch,
+                                    QHeaderView.ResizeToContents, QHeaderView.ResizeToContents,
+                                    QHeaderView.ResizeToContents]):
+            header.setSectionResizeMode(col, mode)
+        self.table.setColumnWidth(0, 130)
+        header.setSectionResizeMode(0, QHeaderView.Fixed)
+        self.table.cellDoubleClicked.connect(self.on_double_click)
+        codes.lay.addWidget(self.table, 1)
+
+        # The log folds away under its own head.
+        self.log_card = look.LogCard(QPlainTextEdit(readOnly=True), height=110)
+        self.log_view = self.log_card.edit
         self.log_view.setMaximumBlockCount(2000)
-        self.log_view.setFont(QFont("Consolas", 9))
-        self.log_view.setMinimumHeight(44)
-        vsplit = QSplitter(Qt.Vertical)
-        vsplit.addWidget(self.split)
-        vsplit.addWidget(self.log_view)
-        vsplit.setCollapsible(0, False)
-        vsplit.setStretchFactor(0, 1)
-        vsplit.setSizes([600, 130])
-        outer.addWidget(vsplit, 1)
+
+        self.look = look.ToolLayout(
+            look.Header("pathao_autofill", [self.browser_pill, connect, self.setup_btn]), self.hero,
+            [("order", card), ("setup", self.setup_box), ("setup", self.chat_box)], [(codes, 1), (self.log_card, 0)],
+            [("order", "Order"), ("setup", "Setup"), ("codes", "Codes")], "codes", left_width=(420, 370))
+        self.setCentralWidget(self.look)
+        self.set_state("Load the code list, then press Start.", "info")
         self.show_setup(self.setup_btn.isChecked())
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        orientation = Qt.Vertical if event.size().width() < STACK_BELOW else Qt.Horizontal
-        if self.split.orientation() != orientation:
-            stacked = orientation == Qt.Vertical
-            self.split.setOrientation(orientation)
-            self.split.setSizes([1000, 1000] if stacked else [3000, 2000])
-            self.table.setMinimumHeight(200 if stacked else 100)  # stacked, the page scrolls: keep a few rows in view
+        self.look.resize_to(event.size().width())
 
     def eventFilter(self, obj, event):
-        if event.type() != QEvent.Resize:
-            pass
-        elif obj is self.table:
+        if event.type() == QEvent.Resize and obj is self.table:
             narrow = event.size().width() < NARROW_TABLE
             for col in (4, 5):  # Phone 2, Amount
                 self.table.setColumnHidden(col, narrow)
-        elif obj is self.card:
-            # the splitter only knows the card's one-line height; keep room for its top row when it wraps
-            m = self.card.contentsMargins()
-            need = self.card.layout().minimumHeightForWidth(event.size().width() - m.left() - m.right())
-            self.card.setMinimumHeight(need + m.top() + m.bottom())
         return super().eventFilter(obj, event)
+
+    def _show_browser(self, text, ok):
+        bg, fg, dot = ((theme.SUCCESS_SOFT, theme.SUCCESS_DARK, theme.SUCCESS) if ok
+                       else (theme.NEUTRAL_SOFT, theme.TEXT_2, theme.MUTED))
+        self.browser_pill.set_look(bg, fg, dot, "Browser connected" if ok else "Browser not connected", tip=text)
 
     def _build_chat_names(self, prefixes):
         while self.chat_flow.count():
@@ -301,7 +243,7 @@ class MainWindow(QMainWindow):
             h = QHBoxLayout(pair)
             h.setContentsMargins(0, 0, 0, 0)
             h.addWidget(QLabel(f"{p}  →"))
-            edit = QLineEdit(names.get(p) or f"{p}-")
+            edit = QLineEdit(names.get(p) or f"{p}-", objectName="field")
             self._fit_to_text(edit)
             edit.textChanged.connect(lambda _, e=edit: (self._fit_to_text(e), self.push_timer.start()))
             h.addWidget(edit)
@@ -454,8 +396,9 @@ class MainWindow(QMainWindow):
             shell.set_on_top(self, False)
 
     def show_setup(self, on):
-        self.setup_box.setVisible(on)
-        self.chat_box.setVisible(on)
+        for card in (self.setup_box, self.chat_box):
+            card.setProperty("folded", not on)  # core/look.py ToolLayout keeps a folded card hidden
+        self.look.refresh_cards()
         if self.settings.get("show_setup", True) != on:
             self.settings["show_setup"] = on
             save_settings(self.settings)
@@ -485,6 +428,7 @@ class MainWindow(QMainWindow):
             _, code, data, raw = ev
             self.panel_code = code
             self.panel_lbl.setText(code)
+            self.hero.sub.setText(f"Current order: {code}")
             for k, edit in self.field_edits.items():
                 text = (data or {}).get(k, "")
                 edit.setPlainText(text) if isinstance(edit, QPlainTextEdit) else edit.setText(text)
@@ -495,8 +439,7 @@ class MainWindow(QMainWindow):
         elif kind == "state":
             self.set_state(ev[1], ev[2])
         elif kind == "browser":
-            self.browser_lbl.setText(ev[1])
-            self.browser_lbl.setStyleSheet(f"color: {theme.SUCCESS}; font-weight: 600;" if ev[2] else f"color: {theme.ERROR};")
+            self._show_browser(ev[1], ev[2])
         elif kind == "attention":
             self.set_state(ev[1], "warn")
             self.log("⚠ " + ev[1])
@@ -515,26 +458,24 @@ class MainWindow(QMainWindow):
         values = [code, status, d.get("name", ""), d.get("phone", ""), d.get("phone2", ""), d.get("amount", "")]
         if data is None and self.table.item(r, 2):  # keep what we already know about this code
             values[2:] = [self.table.item(r, c).text() for c in range(2, 6)]
-        bg = QColor(ROW_COLORS.get(status, "#ffffff"))
-        fg = QColor(theme.MUTED if status == SKIPPED else theme.TEXT)
         for c, v in enumerate(values):
             item = QTableWidgetItem(v)
-            item.setBackground(bg)
-            item.setForeground(fg)
-            if c == 0:
-                item.setFont(QFont("Segoe UI", 10, QFont.DemiBold))
+            if c == 1:
+                item.setData(KIND, ROW_KINDS.get(status, ""))
             self.table.setItem(r, c, item)
 
     def set_state(self, text, level="info"):
-        bg, fg = BANNER_COLORS.get(level, BANNER_COLORS["info"])
-        self.banner.setText(text)
-        self.banner.setStyleSheet(f"background: {bg}; color: {fg}; border-radius: 10px; padding: 9px 14px; "
-                                  "font-size: 13px; font-weight: 600;")
+        kicker, color = LEVELS.get(level, LEVELS["info"])
+        self.hero.set_status(kicker, color, text, f"Current order: {self.panel_code}" if self.panel_code else "")
 
     def update_progress(self):
         saved = sum(1 for c, r in self.rows.items() if self.table.item(r, 1) and self.table.item(r, 1).text().startswith("Saved"))
         self.progress.setRange(0, max(1, len(self.rows)))
         self.progress.setValue(saved)
+        kinds = [self.table.item(r, 1).data(KIND) or "" for r in self.rows.values() if self.table.item(r, 1)]
+        self.hero.counts["saved"].set_value(kinds.count("ok"))
+        self.hero.counts["todo"].set_value(sum(k in ("", "working") for k in kinds))
+        self.hero.counts["none"].set_value(kinds.count("none"))
 
     def log(self, msg):
         line = f"{datetime.now():%H:%M:%S}  {msg}"

@@ -13,17 +13,15 @@ from concurrent.futures import ThreadPoolExecutor
 import anthropic
 from playwright.sync_api import Error as PWError
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QColor, QFont
+
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QFormLayout,
-    QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
-    QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
+    QAbstractItemView, QComboBox, QFileDialog, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QMainWindow, QMessageBox, QPlainTextEdit, QSpinBox, QTableWidget, QTableWidgetItem, QWidget,
 )
 
-from core import shop, whatsapp
+from core import look, shop, theme, whatsapp
+from core.look import KIND
 from core.paths import data_dir
-from core.ui import FlowLayout
 
 from .codes import CodeList, is_done, read_results, write_results
 from .identifier import DEFAULT_MODEL, EFFORTS, MODELS, ModelIdentifier
@@ -67,7 +65,6 @@ ENGINE_HINTS = {
 }
 
 COL_CODE, COL_MODEL, COL_CONF, COL_PHOTOS, COL_CHAT, COL_NOTE = range(6)
-STACK_BELOW = 720  # page width (px) under which the chat list goes above the settings
 MAP_USE, MAP_PREFIX, MAP_COUNT, MAP_RANGE, MAP_CHAT = range(5)
 
 
@@ -347,6 +344,8 @@ class MainWindow(QMainWindow):
         self._filling_table = False
         self.done_count = 0
         self.total_count = 0
+        self.status_text = "Not connected"
+        self.setStyleSheet(look.STYLE)
 
         self._build_ui()
         self.worker = Worker()
@@ -364,251 +363,190 @@ class MainWindow(QMainWindow):
         if path and os.path.exists(path):
             self.codes_edit.setText(path)
 
-    # ---- UI construction
+    # ---- UI construction: the look of core/look.py
     def _build_ui(self):
-        splitter = QSplitter(Qt.Orientation.Horizontal, childrenCollapsible=False)
-        self.splitter = splitter
-        splitter.addWidget(self._build_chat_panel())
-        right = QSplitter(Qt.Orientation.Vertical)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(self._build_setup_panel())
-        right.addWidget(scroll)
-        right.addWidget(self._build_results_panel())
-        right.setStretchFactor(0, 3)
-        right.setStretchFactor(1, 2)
-        splitter.addWidget(right)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 3)
-        splitter.setSizes([330, 1070])
-        central = QWidget()
-        margins = QVBoxLayout(central)
-        margins.setContentsMargins(12, 6, 12, 10)
-        margins.addWidget(splitter)
-        self.setCentralWidget(central)
+        self.wa_pill = look.WaPill()
+        self.btn_connect = look.button("Open WhatsApp", "outline", "message-circle", theme.NAVY)
+        self.btn_connect.clicked.connect(self.connect_whatsapp)
+        self.hero = look.Hero("codes", [("ok", "Found", theme.LIVE), ("low", "Unsure", look.AMBER_ON_NAVY),
+                                        ("none", "Not found", look.RED_ON_NAVY)])
+        self.progress = self.hero.progress
+        self.btn_start = look.button("Start", "heroStart", "play", theme.NAVY)
+        self.btn_start.clicked.connect(self.start_scan)
+        self.btn_stop = look.button("Stop", "heroOutline", "square", "#ffffff")
+        self.btn_stop.clicked.connect(self.stop_scan)
+        self.btn_stop.setEnabled(False)
+        self.hero.add(self.btn_start, self.btn_stop)
+
+        results = self._build_results_panel()
+        self.log_card = look.LogCard(QPlainTextEdit())
+        self.log_view = self.log_card.edit
+        self.log_view.setReadOnly(True)
+        self.look = look.ToolLayout(
+            look.Header("model_detect", [self.wa_pill, self.btn_connect]), self.hero,
+            [("chats", self._build_chat_panel()), ("codes", self._build_codes_panel()),
+             ("codes", self._build_map_panel()), ("settings", self._build_settings_panel())],
+            [(results, 1), (self.log_card, 0)],
+            [("chats", "Chats"), ("codes", "Code list"), ("settings", "Settings"), ("results", "Results")], "results",
+            left_width=(430, 380), on_mode=self._on_mode)
+        self.setCentralWidget(self.look)
+        self.set_status("Not connected", "#888888")
+
+    def _on_mode(self, mode):
+        for col in (COL_CHAT, COL_NOTE):
+            self.table.setColumnHidden(col, mode != "wide")
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        stacked = event.size().width() < STACK_BELOW
-        if stacked != (self.splitter.orientation() == Qt.Orientation.Vertical):
-            self.splitter.setOrientation(Qt.Orientation.Vertical if stacked else Qt.Orientation.Horizontal)
-            self.splitter.setSizes([300, 700] if stacked else [330, 1070])
+        self.look.resize_to(event.size().width())
 
     def _build_chat_panel(self):
-        box = QGroupBox("1. WhatsApp")
-        lay = QVBoxLayout(box)
-        row = FlowLayout()
-        self.btn_connect = QPushButton("Open WhatsApp")
-        self.btn_connect.clicked.connect(self.connect_whatsapp)
-        self.btn_reload_chats = QPushButton("Reload chat list")
+        card = look.Card("message-circle", theme.ACCENT_SOFT, theme.ACCENT, "WhatsApp chats",
+                         "Tick the chats that hold your code lists")
+        self.btn_reload_chats = look.button("", "iconBtn", "refresh-cw", theme.TEXT_2, "Reload the chat list")
         self.btn_reload_chats.clicked.connect(self.reload_chats)
-        row.addWidget(self.btn_connect)
-        row.addWidget(self.btn_reload_chats)
-        lay.addLayout(row)
-        self.status_label = QLabel()
-        box.setMinimumWidth(220)
-        self.status_label.setWordWrap(True)
-        lay.addWidget(self.status_label)
-        self.set_status("Not connected", "#888888")
-        self.groups_only = QCheckBox("List groups only")
+        card.head_right.addWidget(self.btn_reload_chats, 0, Qt.AlignmentFlag.AlignTop)
+        self.groups_only = look.ToggleRow("list", theme.NEUTRAL_SOFT, theme.NAVY, "List groups only")
         self.groups_only.setChecked(self.cfg.get("groups_only", True))
-        lay.addWidget(self.groups_only)
-        self.chat_filter = QLineEdit()
+        card.lay.addWidget(self.groups_only)
+        self.chat_filter = QLineEdit(objectName="field")
         self.chat_filter.setPlaceholderText("Search chats...")
         self.chat_filter.textChanged.connect(self.filter_chats)
-        lay.addWidget(self.chat_filter)
-        lay.addWidget(QLabel("Tick the chats that hold your code lists:", wordWrap=True))
+        card.lay.addWidget(self.chat_filter)
         self.chat_list = QListWidget()
+        self.chat_list.setMinimumHeight(180)
         self.chat_list.itemChanged.connect(self.on_chat_checked)
-        lay.addWidget(self.chat_list, 1)
-        self.chat_count = QLabel("No chats loaded")
-        lay.addWidget(self.chat_count)
-        row = FlowLayout()
-        b = QPushButton("Untick all")
-        b.clicked.connect(lambda: self.set_all_checked(False))
-        row.addWidget(b)
-        b = QPushButton("Show ticked only")
-        b.setCheckable(True)
-        b.toggled.connect(self.filter_chats)
-        self.btn_ticked_only = b
-        row.addWidget(b)
-        lay.addLayout(row)
-        return box
+        card.lay.addWidget(self.chat_list)
+        self.chat_count = QLabel("No chats loaded", objectName="hint")
+        untick = look.button("Untick all", "plain")
+        untick.clicked.connect(lambda: self.set_all_checked(False))
+        self.btn_ticked_only = look.button("Show ticked only", "plain")
+        self.btn_ticked_only.setCheckable(True)
+        self.btn_ticked_only.toggled.connect(self.filter_chats)
+        card.lay.addLayout(look.row(self.chat_count, None, untick, self.btn_ticked_only, spacing=4))
+        return card
 
-    def _build_setup_panel(self):
-        w = QWidget()
-        lay = QVBoxLayout(w)
-
-        # codes file
-        box = QGroupBox("2. Code list file")
-        bl = QVBoxLayout(box)
-        row = QHBoxLayout()
+    def _build_codes_panel(self):
+        card = look.Card("file-text", theme.WARNING_SOFT, theme.WARNING, "Code list file")
+        self.codes_info = card.subtitle
+        card.set_subtitle("No code list loaded")
         self.codes_edit = QLineEdit()
-        row.addWidget(self.codes_edit, 1)
-        b = QPushButton("Browse...")
-        b.clicked.connect(self.browse_codes)
-        row.addWidget(b)
-        b = QPushButton("Load")
-        b.clicked.connect(self.load_codes)
-        row.addWidget(b)
-        bl.addLayout(row)
-        self.codes_info = QLabel("No code list loaded")
-        bl.addWidget(self.codes_info)
-        lay.addWidget(box)
+        browse = look.button("Browse", "mini")
+        browse.clicked.connect(self.browse_codes)
+        load = look.button("Load", "mini")
+        load.clicked.connect(self.load_codes)
+        card.lay.addWidget(look.path_box(self.codes_edit, browse, load, icon="file-text"))
+        return card
 
-        # mapping
-        box = QGroupBox("3. Which chat to search for each code group (searched from the bottom of the list)")
-        bl = QVBoxLayout(box)
+    def _build_map_panel(self):
+        card = look.Card("tag", theme.SUCCESS_SOFT, theme.SUCCESS, "Chat for each code group",
+                         "Searched from the bottom of the list")
         self.map_table = QTableWidget(0, 5)
-        self.map_table.setHorizontalHeaderLabels(["Search", "Code group", "Codes", "Range (bottom -> top)", "WhatsApp chat"])
+        self.map_table.setHorizontalHeaderLabels(["Search", "Group", "Codes", "Range (bottom -> top)", "WhatsApp chat"])
+        look.rows_table(self.map_table, {}, MAP_USE, height=46, painter=False)  # its own tick boxes and chat boxes
         hh = self.map_table.horizontalHeader()
         for c in (MAP_USE, MAP_PREFIX, MAP_COUNT, MAP_RANGE):
             hh.setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(MAP_CHAT, QHeaderView.ResizeMode.Stretch)
-        self.map_table.verticalHeader().setVisible(False)
-        self.map_table.setMinimumHeight(250)
-        bl.addWidget(self.map_table)
-        row = QHBoxLayout()
-        b = QPushButton("Auto-match by chat name")
+        self.map_table.setColumnHidden(MAP_RANGE, True)  # the range is the row's tooltip
+        self.map_table.setMinimumHeight(190)
+        card.lay.addWidget(self.map_table)
+        b = look.button("Auto-match by chat name", "soft", "refresh-cw")
         b.clicked.connect(self.auto_match)
-        row.addWidget(b)
-        tip = QLabel("A chat whose name contains the group code (e.g. \"5a\") is matched automatically.")
-        tip.setWordWrap(True)
-        row.addWidget(tip, 1)
-        bl.addLayout(row)
-        lay.addWidget(box)
+        card.lay.addWidget(b)
+        card.lay.addWidget(look.hint("A chat whose name contains the group code (e.g. \"5a\") is matched automatically."))
+        return card
 
-        # settings
-        box = QGroupBox("4. Settings")
-        form = QFormLayout(box)
-        row = QHBoxLayout()
+    def _build_settings_panel(self):
+        card = look.Card("sliders-horizontal", theme.NEUTRAL_SOFT, theme.NAVY, "Settings")
         self.out_edit = QLineEdit(self.cfg.get("output_file", ""))
-        row.addWidget(self.out_edit, 1)
-        b = QPushButton("Browse...")
+        b = look.button("Browse", "mini")
         b.clicked.connect(self.browse_output)
-        row.addWidget(b)
-        form.addRow("Result file:", row)
+        card.lay.addLayout(look.column(look.field("Result file"), look.path_box(self.out_edit, b, icon="file-text")))
 
         self.mode_combo = QComboBox()
         for key, label in MODE_LABELS.items():
             self.mode_combo.addItem(label, key)
         self.mode_combo.setCurrentIndex(max(0, self.mode_combo.findData(self.cfg.get("mode", MODE_BELOW))))
-        form.addRow("In the chat:", self.mode_combo)
+        card.lay.addLayout(look.column(look.field("In the chat"), self.mode_combo))
 
         self.max_images = QSpinBox()
         self.max_images.setRange(1, 10)
         self.max_images.setValue(self.cfg.get("max_images", 4))
-        form.addRow("Photos per code:", self.max_images)
-
-        self.engine_combo = QComboBox()
-        for key, label in ENGINE_LABELS.items():
-            self.engine_combo.addItem(label, key)
-        self.engine_combo.setCurrentIndex(max(0, self.engine_combo.findData(self.cfg.get("engine", ENGINE_TEXT))))
-        form.addRow("Identify phones with:", self.engine_combo)
-
-        row = QHBoxLayout()
-        self.model_combo = QComboBox()
-        self.model_combo.setEditable(True)
-        row.addWidget(self.model_combo, 1)
-        self.effort_label = QLabel("Effort:")
-        row.addWidget(self.effort_label)
-        self.effort_combo = QComboBox()
-        self.effort_combo.addItems(EFFORTS)
-        self.effort_combo.setCurrentText(self.cfg.get("effort", "high"))
-        row.addWidget(self.effort_combo)
-        form.addRow("AI model:", row)
-
-        row = QHBoxLayout()
-        self.key_edit = QLineEdit(self.cfg.get("api_key", ""))
-        self.key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.key_edit.setPlaceholderText(
-            "sk-ant-...  (or leave empty to use the ANTHROPIC_API_KEY environment variable)")
-        row.addWidget(self.key_edit, 1)
-        b = QPushButton("Show")
-        b.setCheckable(True)
-        b.toggled.connect(lambda on: self.key_edit.setEchoMode(
-            QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password))
-        row.addWidget(b)
-        self.key_row_label = QLabel("Claude API key:")
-        self.key_row = QWidget()
-        self.key_row.setLayout(row)
-        form.addRow(self.key_row_label, self.key_row)
-        self.engine_hint = QLabel()
-        self.engine_hint.setWordWrap(True)
-        self.engine_hint.setOpenExternalLinks(True)
-        form.addRow("", self.engine_hint)
-        self._engine = None
-        self.engine_combo.currentIndexChanged.connect(self.on_engine_changed)
-        self.on_engine_changed()
-
-        row = FlowLayout(hspace=16)
-        self.save_photos = QCheckBox("Save the photos of each code (for checking)")
-        self.save_photos.setChecked(self.cfg.get("save_photos", True))
-        row.addWidget(self.save_photos)
-        self.skip_done = QCheckBox("Skip codes that already have a model in the result file")
-        self.skip_done.setChecked(self.cfg.get("skip_done", True))
-        row.addWidget(self.skip_done)
-        row.addStretch()
-        form.addRow("", row)
-
-        row = FlowLayout()
         self.extra_screens = QSpinBox()
         self.extra_screens.setRange(2, 500)
         self.extra_screens.setValue(self.cfg.get("extra_screens", 15))
         self.extra_screens.setToolTip("After the codes are found, keep scrolling up this many screens "
                                       "looking for the original posts before stopping.")
-        row.addWidget(self.extra_screens)
-        row.addWidget(QLabel("   Max scroll steps per chat:"))
         self.max_steps = QSpinBox()
         self.max_steps.setRange(50, 100000)
         self.max_steps.setValue(self.cfg.get("max_steps", 3000))
-        row.addWidget(self.max_steps)
-        row.addStretch()
-        form.addRow("Extra screens to scroll:", row)
-        lay.addWidget(box)
+        card.lay.addLayout(look.row(look.column(look.field("Photos per code"), self.max_images),
+                                    look.column(look.field("Extra screens to scroll"), self.extra_screens), spacing=10))
+        card.lay.addLayout(look.row(look.column(look.field("Max scroll steps per chat"), self.max_steps), None))
 
-        # run
-        row = QHBoxLayout()
-        self.btn_start = QPushButton("Start", objectName="primary")
-        self.btn_start.setStyleSheet("QPushButton{padding:8px 28px;}")
-        self.btn_start.clicked.connect(self.start_scan)
-        self.btn_stop = QPushButton("Stop")
-        self.btn_stop.setStyleSheet("QPushButton{padding:8px 20px;}")
-        self.btn_stop.clicked.connect(self.stop_scan)
-        self.btn_stop.setEnabled(False)
-        self.progress = QProgressBar()
-        self.progress.setFormat("%v / %m codes")
-        self.progress.setValue(0)
-        row.addWidget(self.btn_start)
-        row.addWidget(self.btn_stop)
-        row.addWidget(self.progress, 1)
-        lay.addLayout(row)
-        lay.addStretch(1)
-        return w
+        self.engine_combo = QComboBox()
+        for key, label in ENGINE_LABELS.items():
+            self.engine_combo.addItem(label, key)
+        self.engine_combo.setCurrentIndex(max(0, self.engine_combo.findData(self.cfg.get("engine", ENGINE_TEXT))))
+        card.lay.addLayout(look.column(look.field("Identify phones with"), self.engine_combo))
+
+        self.model_combo = QComboBox()
+        self.model_combo.setEditable(True)
+        self.effort_label = look.field("Effort")
+        self.effort_combo = QComboBox()
+        self.effort_combo.addItems(EFFORTS)
+        self.effort_combo.setCurrentText(self.cfg.get("effort", "high"))
+        card.lay.addLayout(look.column(look.field("AI model"),
+                                       look.row(self.model_combo, self.effort_label, self.effort_combo, stretch_at=0)))
+
+        self.key_edit = QLineEdit(self.cfg.get("api_key", ""), objectName="field")
+        self.key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.key_edit.setPlaceholderText("sk-ant-...  (or leave empty to use the ANTHROPIC_API_KEY environment variable)")
+        b = look.button("Show", "mini")
+        b.setCheckable(True)
+        b.toggled.connect(lambda on: self.key_edit.setEchoMode(
+            QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password))
+        self.key_row_label = look.field("Claude API key")
+        self.key_row = QWidget()
+        self.key_row.setLayout(look.row(self.key_edit, b, stretch_at=0))
+        card.lay.addLayout(look.column(self.key_row_label, self.key_row))
+        self.engine_hint = QLabel(objectName="hint", wordWrap=True)
+        self.engine_hint.setOpenExternalLinks(True)
+        card.lay.addWidget(self.engine_hint)
+        self._engine = None
+        self.engine_combo.currentIndexChanged.connect(self.on_engine_changed)
+        self.on_engine_changed()
+
+        self.save_photos = look.ToggleRow("image", theme.SUCCESS_SOFT, theme.SUCCESS, "Save the photos of each code",
+                                          "For checking")
+        self.save_photos.setChecked(self.cfg.get("save_photos", True))
+        self.skip_done = look.ToggleRow("check", theme.ACCENT_SOFT, theme.ACCENT, "Skip codes that already have a model",
+                                        "In the result file")
+        self.skip_done.setChecked(self.cfg.get("skip_done", True))
+        card.lay.addLayout(look.column(self.save_photos, self.skip_done, spacing=2))
+        return card
 
     def _build_results_panel(self):
-        tabs = QTabWidget()
+        card = look.Card("smartphone", theme.SUCCESS_SOFT, theme.SUCCESS, "Results",
+                         "Double-click a code to open its photos. Edit a model to correct it.")
+        card.lay.setContentsMargins(18, 18, 18, 10)
         self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["Code", "Phone model (editable)", "Confidence", "Photos", "Chat", "Note"])
+        self.table.setHorizontalHeaderLabels(["Code", "Phone model", "Confidence", "Photos", "Chat", "Note"])
+        look.rows_table(self.table, {COL_CODE: "code", COL_MODEL: "name", COL_CONF: "pill", COL_PHOTOS: "muted",
+                                     COL_CHAT: "muted", COL_NOTE: "muted"}, COL_CODE, height=52)
         hh = self.table.horizontalHeader()
         for c in (COL_CODE, COL_CONF, COL_PHOTOS):
             hh.setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
-        hh.setSectionResizeMode(COL_MODEL, QHeaderView.ResizeMode.Interactive)
+        hh.setSectionResizeMode(COL_MODEL, QHeaderView.ResizeMode.Stretch)
         hh.setSectionResizeMode(COL_CHAT, QHeaderView.ResizeMode.Interactive)
         hh.setSectionResizeMode(COL_NOTE, QHeaderView.ResizeMode.Stretch)
-        self.table.setColumnWidth(COL_MODEL, 240)
         self.table.setColumnWidth(COL_CHAT, 160)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.itemChanged.connect(self.on_table_edit)
         self.table.cellDoubleClicked.connect(self.open_photo_folder)
-        self.table.setToolTip("Double-click a code to open its photos. Edit a model to correct it.")
-        tabs.addTab(self.table, "Results")
-        self.log_view = QPlainTextEdit()
-        self.log_view.setReadOnly(True)
-        self.log_view.setFont(QFont("Consolas", 9))
-        tabs.addTab(self.log_view, "Log")
-        self.tabs = tabs
-        return tabs
+        card.lay.addWidget(self.table, 1)
+        return card
 
     # ---- config
     def _load_config(self):
@@ -677,6 +615,7 @@ class MainWindow(QMainWindow):
     def add_log(self, text):
         line = f"[{time.strftime('%H:%M:%S')}] {text}"
         self.log_view.appendPlainText(line)
+        self.log_card.set_lines(self.log_view.blockCount())
         try:
             with open(LOG_PATH, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
@@ -684,7 +623,45 @@ class MainWindow(QMainWindow):
             pass
 
     def set_status(self, text, color):
-        self.status_label.setText(f"<b style='color:{color}'>&#9679;</b> {text}")
+        """The worker's WhatsApp status (text, colour) on the header's pill and the control card."""
+        self.status_text = text
+        state = {"#208020": "ready", "#d08000": "qr" if "QR" in text else "loading", "#c03030": "error"}.get(color, "idle")
+        bg, fg, dot, words = look.WA_LOOKS.get(state, look.WA_IDLE)
+        self.wa_pill.set_look(bg, fg, dot, "Waiting for WhatsApp" if text.startswith("Waiting") else words, tip=text)
+        self.wa_state = state
+        self.refresh_hero()
+
+    def refresh_hero(self):
+        kicker, color = look.wa_kicker(getattr(self, "wa_state", "idle"), self.is_busy)
+        n = len(self.codelist.codes) if self.codelist else 0
+        if self.is_busy and self.total_count:
+            title = f"Finding the phone models of {self.total_count} codes"
+        elif not n:
+            title = "Load the code list"
+        else:
+            done = sum(1 for c in self.codelist.codes if is_done(self.results.get(c, {}).get("model")))
+            title = f"{done} of {n} codes have a model"
+        self.hero.set_status(kicker, color, title, self.status_text)
+        self.hero.show_hint(not self.is_busy and getattr(self, "wa_state", "idle") == "idle")
+        counts = {"ok": 0, "low": 0, "none": 0}
+        for r in self.results.values():
+            kind = self._kind(r)
+            if kind == "ok":
+                counts["ok"] += 1
+            elif kind in ("none", "error"):
+                counts["low" if kind == "none" else "none"] += 1
+        for key, tile in self.hero.counts.items():
+            tile.set_value(counts[key])
+
+    @staticmethod
+    def _kind(res):
+        """A result's row kind (core/look.py KINDS): a model found, unsure, or none."""
+        model = res.get("model", "")
+        if model in ("NOT FOUND", "NO IMAGE") or model == "unknown":
+            return "error"
+        if res.get("confidence") == "low":
+            return "none"
+        return "ok" if is_done(model) else ""
 
     # ---- WhatsApp / chats
     def connect_whatsapp(self):
@@ -700,6 +677,7 @@ class MainWindow(QMainWindow):
     def on_connected(self, ok):
         self.is_connected = ok
         self.btn_connect.setText("Reconnect" if ok else "Open WhatsApp")
+        self.refresh_hero()
 
     def on_chats(self, names):
         ticked = set(self.checked_chats())  # a reload keeps this session's ticks; the first load has none
@@ -836,6 +814,7 @@ class MainWindow(QMainWindow):
                               (MAP_RANGE, f"{codes[-1]}  ->  {codes[0]}")):
                 it = QTableWidgetItem(text)
                 it.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                it.setToolTip(f"{len(codes)} codes, {codes[-1]} (bottom) up to {codes[0]}")
                 self.map_table.setItem(r, col, it)
             combo = QComboBox()
             combo.setEditable(True)
@@ -874,23 +853,9 @@ class MainWindow(QMainWindow):
         self.table.item(r, COL_PHOTOS).setText(str(res["images"]) if res.get("images") else "")
         self.table.item(r, COL_CHAT).setText(res.get("chat", ""))
         self.table.item(r, COL_NOTE).setText(res.get("note", ""))
-        if model in ("NOT FOUND", "NO IMAGE") or model == "unknown":
-            color = QColor("#f8d7d7")
-        elif res.get("confidence") == "low":
-            color = QColor("#fff1c2")
-        elif is_done(model):
-            color = QColor("#dff3e3")
-        else:
-            color = None
-        for col in range(6):
-            item = self.table.item(r, col)
-            if color:
-                item.setBackground(color)
-                item.setForeground(QColor("black"))
-            else:
-                item.setData(Qt.ItemDataRole.BackgroundRole, None)
-                item.setData(Qt.ItemDataRole.ForegroundRole, None)
+        self.table.item(r, COL_CODE).setData(KIND, self._kind(res))  # the row's status square
         self._filling_table = was
+        self.refresh_hero()
 
     def write_output(self):
         if not self.codelist or not self.out_edit.text().strip():
@@ -994,7 +959,8 @@ class MainWindow(QMainWindow):
         self.progress.setValue(0)
         self.add_log(f"Starting: {self.total_count} codes in {len(job_list)} chats"
                      + (f" ({skipped_done} already done, skipped)" if skipped_done else "") + ".")
-        self.tabs.setCurrentIndex(1)
+        if self.look.mode == "narrow":
+            self.look.show_tab("results")
         self.worker.submit("scan", job_list, opts)
 
     def stop_scan(self):
@@ -1008,8 +974,8 @@ class MainWindow(QMainWindow):
         self.btn_connect.setEnabled(not busy)
         self.btn_reload_chats.setEnabled(not busy)
         self.btn_stop.setEnabled(busy)
+        self.refresh_hero()
         if not busy and cmd == "scan":
-            self.tabs.setCurrentIndex(0)
             self.write_output()
             self.add_log(f"Result file: {self.out_edit.text().strip()}")
 

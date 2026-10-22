@@ -5,12 +5,15 @@ Colours are the site's tokens (its oklch values converted to sRGB), sizes are it
 in pixels, icons are the lucide icons the site uses. The other tools keep core/theme.py.
 
   icon_pixmap / qicon     lucide icons
-  Button, ToggleTile      shadcn buttons (default, outline, secondary, ghost, destructive, link, gradient)
+  Button, ToggleTile      shadcn buttons (default, outline, secondary, ghost, destructive, link, brand)
   Badge, Card, Box, Alert, Separator, Switch, Slider, CheckBox, Select, Input, TextArea, Avatar, Spinner
   WebDialog               a centred card over a dimmed window (shadcn Dialog)
   toast                   sonner-style notifications at the top of the window (richColors)
-  WebPage                 a white page with the hero glow
-  Logo, GradientTitle, ResponsiveGrid, Meter
+  WebPage                 a white page
+  Logo, HeroTitle, ResponsiveGrid, Meter
+
+The app uses no gradients: where the site has one (the hero glow, the gradient title and buttons) the
+app uses a solid colour.
 """
 from __future__ import annotations
 
@@ -21,8 +24,7 @@ from PySide6.QtCore import (
     QByteArray, QEasingCurve, QEvent, QPointF, QRect, QRectF, QSize, Qt, QTimer, QVariantAnimation, Signal,
 )
 from PySide6.QtGui import (
-    QBrush, QColor, QCursor, QFont, QFontMetricsF, QIcon, QImage, QLinearGradient, QPainter, QPainterPath, QPen,
-    QPixmap, QRadialGradient,
+    QColor, QCursor, QFont, QFontMetricsF, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap,
 )
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
@@ -53,8 +55,6 @@ AMBER_600 = "#e17100"
 ROSE = "#ff2056"          # rose-500
 ROSE_950 = "#4d0218"
 ROSE_100 = "#ffe4e6"
-GLOW_1 = "#217bf4"        # .hero-glow
-GLOW_2 = "#069ff9"
 MONO = "'Cascadia Mono', 'Consolas', monospace"
 RADIUS = 10               # --radius 0.625rem: rounded-lg; rounded-xl 14, rounded-2xl 18, rounded-3xl 22
 
@@ -146,6 +146,24 @@ ICONS = {
     "folder-open": '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>',
     "search": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
     "external-link": '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+    "calendar": '<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/>',
+    "truck": '<path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/>',
+    "pause": '<rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/>',
+    "skip-forward": '<path d="M5 4l10 8-10 8V4z"/><path d="M19 5v14"/>',
+    "check-check": '<path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/>',
+    "undo-2": '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/>',
+    "package": '<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><path d="m3.3 7 7.703 4.734a2 2 0 0 0 1.994 0L20.7 7"/><path d="m7.5 4.27 9 5.15"/>',
+    "globe": '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+    "copy": '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+    "smile": '<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01"/><path d="M15 9h.01"/>',
+    "list": '<path d="M3 12h.01"/><path d="M3 18h.01"/><path d="M3 6h.01"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M8 6h13"/>',
+    "terminal": '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
+    "folder": '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+    "message-circle": '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>',
+    "play": '<path d="M6 3l14 9-14 9V3z"/>',
+    "square": '<rect width="18" height="18" x="3" y="3" rx="2"/>',
+    "file-text": '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+    "tag": '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5"/>',
     "wifi-off": '<path d="M12 20h.01"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/><path d="M5 12.859a10 10 0 0 1 5.17-2.69"/><path d="M19 12.859a10 10 0 0 0-2.007-1.523"/><path d="M2 8.82a15 15 0 0 1 4.177-2.643"/><path d="M22 8.82a15 15 0 0 0-11.288-3.764"/><path d="m2 2 20 20"/>',
 }
 
@@ -277,6 +295,8 @@ def _variant_colors(variant: str) -> dict:
     """bg / fg / border / hover-bg for a shadcn button variant."""
     if variant == "default":
         return dict(bg=PRIMARY, fg="#ffffff", border=PRIMARY, hover=tint(PRIMARY, .8), icon="#ffffff")
+    if variant == "brand":  # the big calls to action (Enhance photo): the brand blue, darker on hover
+        return dict(bg=PRIMARY, fg="#ffffff", border=PRIMARY, hover=mix(PRIMARY, NAVY, .2), icon="#ffffff")
     if variant == "outline":
         return dict(bg=BG, fg=FG, border=BORDER, hover=MUTED, icon=FG)
     if variant == "secondary":
@@ -297,7 +317,7 @@ def _variant_colors(variant: str) -> dict:
 
 class Button(QPushButton):
     """shadcn <Button>: variant default | outline | secondary | ghost | ghost-muted | destructive | link |
-    gradient (brand sky -> blue, the Enhance button), size xs | sm | default | lg | xl | 2xl | icon*."""
+    brand (the Enhance button), size xs | sm | default | lg | xl | 2xl | icon*."""
 
     def __init__(self, text: str = "", icon: str | None = None, variant: str = "default", size: str = "default",
                  parent=None, full: bool = False, height: int | None = None, weight: int = 600,
@@ -325,35 +345,22 @@ class Button(QPushButton):
 
     def _style(self):
         r, pad = self._radius, self._pad
-        if self.variant == "gradient":
-            a, b = SKY, BLUE
-            ha, hb = mix(SKY, "#ffffff", .1), mix(BLUE, "#ffffff", .1)
-            da, db = tint(SKY, .5), tint(BLUE, .5)
-            self.setStyleSheet(f"""
-                QPushButton {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {a}, stop:1 {b});
-                    color: #ffffff; border: none; border-radius: {r}px; padding: 0 {pad}px;
-                    min-height: {self._h}px; max-height: {self._h}px; }}
-                QPushButton:hover {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {ha}, stop:1 {hb}); }}
-                QPushButton:pressed {{ padding-top: 1px; }}
-                QPushButton:disabled {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {da}, stop:1 {db});
-                    color: #ffffff; }}""")
-            return
         c = _variant_colors(self.variant)
         dis_bg = "transparent" if c["bg"] == "transparent" else tint(c["bg"], .5)
-        dis_fg = tint(c["fg"], .5)
+        dis_fg = "#ffffff" if self.variant == "brand" else tint(c["fg"], .5)
         dis_border = "transparent" if c["border"] == "transparent" else tint(c["border"], .5)
         underline = "QPushButton:hover { text-decoration: underline; }" if self.variant == "link" else ""
         self.setStyleSheet(f"""
             QPushButton {{ background: {c['bg']}; color: {c['fg']}; border: 1px solid {c['border']};
                 border-radius: {r}px; padding: 0 {pad}px; min-height: {self._h - 2}px; max-height: {self._h - 2}px;
                 text-align: center; }}
-            QPushButton:hover {{ background: {c['hover']}; color: {c['fg']}; border-color: {c['border'] if self.variant != 'default' else c['hover']}; }}
+            QPushButton:hover {{ background: {c['hover']}; color: {c['fg']}; border-color: {c['border'] if self.variant not in ('default', 'brand') else c['hover']}; }}
             QPushButton:pressed {{ padding-top: 1px; }}
             QPushButton:disabled {{ background: {dis_bg}; color: {dis_fg}; border-color: {dis_border}; }}
             {underline}""")
 
     def icon_color(self) -> str:
-        if self.variant == "gradient":
+        if self.variant == "brand":
             return "#ffffff"
         color = _variant_colors(self.variant)["icon"]
         return color if self.isEnabled() else tint(color, .5)
@@ -765,7 +772,7 @@ class Avatar(QWidget):
         p.end()
 
 
-# ---- meters, glow, title -------------------------------------------------------------------
+# ---- meters, title -------------------------------------------------------------------------
 class Bar(QWidget):
     """A thin rounded progress bar (Progress h-1 / h-1.5 / h-2)."""
 
@@ -796,49 +803,21 @@ class Bar(QWidget):
         p.end()
 
 
-def paint_hero_glow(p: QPainter, width: float, height: float):
-    """.hero-glow: radial-gradient(60% 50% at 50% 0%, glow 16%, transparent 70%),
-    radial-gradient(40% 40% at 85% 20%, glow 10%, transparent 70%)."""
-    for cx, cy, rx, ry, color, alpha in ((.5, 0, .6, .5, GLOW_1, .16), (.85, .2, .4, .4, GLOW_2, .10)):
-        p.save()
-        center = QPointF(width * cx, height * cy)
-        rxp, ryp = width * rx, height * ry
-        p.translate(center)
-        p.scale(1, ryp / rxp if rxp else 1)
-        g = QRadialGradient(QPointF(0, 0), rxp)
-        c0 = QColor(color)
-        c0.setAlphaF(alpha)
-        c1 = QColor(color)
-        c1.setAlphaF(0)
-        g.setColorAt(0, c0)
-        g.setColorAt(.7, c1)
-        g.setColorAt(1, c1)
-        p.setPen(Qt.NoPen)
-        p.setBrush(QBrush(g))
-        p.drawEllipse(QPointF(0, 0), rxp, rxp)
-        p.restore()
-
-
 class WebPage(QWidget):
-    """A white page (the site's background) with the hero glow over its top ``glow`` px."""
+    """A white page (the site's background)."""
 
-    def __init__(self, glow: int = 0, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.glow = glow
         self.setAttribute(Qt.WA_StyledBackground, False)
 
     def paintEvent(self, _):
         p = QPainter(self)
         p.fillRect(self.rect(), QColor(BG))
-        if self.glow:
-            p.setRenderHint(QPainter.Antialiasing)
-            p.setClipRect(QRect(0, 0, self.width(), self.glow))
-            paint_hero_glow(p, self.width(), self.glow)
         p.end()
 
 
-class GradientTitle(QWidget):
-    """The hero's h1: bold, tight tracking, text fading from foreground to foreground/65."""
+class HeroTitle(QWidget):
+    """The hero's h1: bold, tight tracking, in the foreground colour."""
 
     def __init__(self, text: str, px: int = 60, small_px: int = 36, parent=None):
         super().__init__(parent)
@@ -867,12 +846,7 @@ class GradientTitle(QWidget):
         w = fm.horizontalAdvance(self.text)
         base = (self.height() - fm.height()) / 2 + fm.ascent()
         path.addText(QPointF((self.width() - w) / 2, base), f, self.text)
-        g = QLinearGradient(0, base - fm.ascent(), 0, base + fm.descent())
-        g.setColorAt(0, QColor(FG))
-        end = QColor(FG)
-        end.setAlphaF(.65)
-        g.setColorAt(1, end)
-        p.fillPath(path, QBrush(g))
+        p.fillPath(path, QColor(FG))
         p.end()
 
 
@@ -1162,17 +1136,15 @@ class WebDialog(QDialog):
             self.close_btn.raise_()
 
     def header(self, title: str, text: str = "", icon: str | None = None, icon_bg: str | None = None,
-               icon_fg: str = PRIMARY, gradient: bool = False):
+               icon_fg: str = PRIMARY):
         col = QVBoxLayout()
         col.setSpacing(6)
         if icon:
             tile = QLabel()
             tile.setFixedSize(44, 44)
             tile.setAlignment(Qt.AlignCenter)
-            bg = (f"qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {SKY}, stop:1 {BLUE})" if gradient
-                  else icon_bg or tint(PRIMARY, .1))
-            tile.setStyleSheet(f"background: {bg}; border-radius: 14px;")
-            tile.setPixmap(icon_pixmap(icon, "#ffffff" if gradient else icon_fg, 20, max(2.0, dpr())))
+            tile.setStyleSheet(f"background: {icon_bg or tint(PRIMARY, .1)}; border-radius: 14px;")
+            tile.setPixmap(icon_pixmap(icon, icon_fg, 20, max(2.0, dpr())))
             col.addWidget(tile)
             col.addSpacing(2)
         col.addWidget(label(title, 18, 700, FG, wrap=True))

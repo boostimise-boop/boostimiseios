@@ -74,7 +74,7 @@ class PlansPage(W.WebPage):
         scroll.setStyleSheet("QScrollArea { background: transparent; }")
         scroll.viewport().setAutoFillBackground(False)
         outer.addWidget(scroll)
-        page = W.WebPage(glow=420)
+        page = W.WebPage()
         scroll.setWidget(page)
         lay = QVBoxLayout(page)
         lay.setContentsMargins(24, 56, 24, 64)

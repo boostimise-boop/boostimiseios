@@ -164,7 +164,7 @@ class PhotoEnhancerPage(QWidget):
 
     # ---- building ------------------------------------------------------------------------
     def _build_landing(self) -> QWidget:
-        page = W.WebPage(glow=560)
+        page = W.WebPage()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 56, 0, 48)
         lay.setSpacing(0)
@@ -172,7 +172,7 @@ class PhotoEnhancerPage(QWidget):
         hl = QVBoxLayout(hero)
         hl.setContentsMargins(0, 0, 0, 0)
         hl.setSpacing(0)
-        hl.addWidget(W.GradientTitle("AI PHOTO ENHANCER"))
+        hl.addWidget(W.HeroTitle("AI PHOTO ENHANCER"))
         hl.addSpacing(16)
         hl.addWidget(W.label("Enhance and upscale your photos with AI", 18, 400, W.MUTED_FG, align=Qt.AlignCenter))
         hl.addSpacing(36)
@@ -342,7 +342,7 @@ class PhotoEnhancerPage(QWidget):
         self.narrow.setWidget(narrow_inner)
         self.ws_layouts.addWidget(self.wide)
         self.ws_layouts.addWidget(self.narrow)
-        page = W.WebPage(glow=0)
+        page = W.WebPage()
         pl = QVBoxLayout(page)
         pl.setContentsMargins(0, 0, 0, 0)
         pl.addWidget(self.ws_layouts)

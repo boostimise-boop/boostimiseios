@@ -1,5 +1,9 @@
 """Fetch by Code: search WhatsApp Web for product codes and save their images.
 
+The page has the look of core/look.py: a navy control card with the run's progress, counts and
+buttons, the code list as chips, the settings as cards, and the results as a list of rows.
+Fetch & Enhance (tools/fetch_enhance/page.py) is this page with more settings.
+
 Settings are kept in data/fetch_by_code; WhatsApp is the window all tools share (core/whatsapp.py).
 """
 from __future__ import annotations
@@ -7,20 +11,20 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections import Counter
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, QStandardPaths, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtCore import QEvent, QSettings, QStandardPaths, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QCompleter, QFileDialog, QFormLayout,
-    QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
-    QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QSplitter, QStyle, QTableWidget,
+    QAbstractItemView, QCheckBox, QComboBox, QCompleter, QFileDialog, QHeaderView, QHBoxLayout, QLabel, QLineEdit,
+    QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QSpinBox, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from core import theme
+from core import look, theme
+from core.look import KIND
 from core.paths import data_dir
-from core.ui import FlowLayout, scrollable
+from core.ui import FlowLayout
 
 from .helpers import CodeItem, existing_output, parse_code_list
 from .worker import WhatsAppWorker
@@ -38,27 +42,11 @@ NEIGHBOUR_MODES = [
     ("Captioned with the code, + uncaptioned ones sent right before", "before"),
     ("Captioned with the code, + uncaptioned ones before and after", "both"),
 ]
-
-STATE_COLORS = {
-    "idle": "#9aa0a6", "closed": "#9aa0a6", "starting": "#1a73e8", "loading": "#1a73e8",
-    "qr": "#e37400", "ready": "#1e8e3e", "error": "#d93025",
-}
-ROW_COLORS = {  # kind: (text, background)
-    "working": ("#1967d2", "#e8f0fe"),
-    "ok": ("#137333", "#e6f4ea"),
-    "none": ("#b06000", "#fef7e0"),
-    "error": ("#c5221f", "#fce8e6"),
-    "skipped": ("#5f6368", "#f1f3f4"),
-}
-
-# The look comes from core/theme.py; only what is special to this page is here.
-STYLE = f"""
-QLabel#hint {{ color: {theme.TEXT_2}; font-size: 9pt; }}
-QLabel#count {{ background: {theme.ACCENT_SOFT}; color: {theme.ACCENT_DARK}; font-weight: 600; font-size: 9pt;
-               border-radius: 6px; padding: 3px 9px; }}
-QProgressBar {{ min-height: 20px; }}
-"""
-STACK_BELOW = 760  # page width (px) under which the results go below the settings instead of beside them
+# result filters: key, label, the row kinds it shows (None: every row)
+FILTERS = [("all", "All", None), ("ok", "Saved", {"ok"}), ("working", "In progress", {"working", "queued"}),
+           ("skipped", "Skipped", {"skipped"}), ("none", "No photos", {"none", "error"})]
+DONE_KINDS = ("ok", "skipped", "none", "error")
+STACK_BELOW = look.STACK_BELOW
 
 
 def user_dir(location: QStandardPaths.StandardLocation, fallback: str) -> Path:
@@ -71,18 +59,26 @@ def default_browse_dir() -> Path:
 
 class MainWindow(QMainWindow):
     busy_changed = Signal(bool)
+    START_TEXT = ("Fetch all", "Fetch selected")  # the control card's two start buttons
 
     def __init__(self, title: str, data_name: str):
         super().__init__()
         self.title = title
+        self.tool_key = data_name  # the tool's key in tools/__init__.py
         self.data_dir = data_dir(data_name)
-        self.setStyleSheet(STYLE)
+        self.setStyleSheet(look.STYLE)
         self.settings = QSettings(str(self.data_dir / "settings.ini"), QSettings.IniFormat)
         self.worker: WhatsAppWorker | None = None
         self.items: list[CodeItem] = []
         self.wa_state = "idle"
+        self.wa_message = "Not connected"
         self.job_running = False
         self.pending_job: tuple[list, dict] | None = None
+        self.working_row: int | None = None  # the code being fetched now, and its status
+        self.working_text = ""
+        self.activity = ""                   # what the worker does right now (its status bar line)
+        self.code_view = "codes"             # the code list as chips, or as the text to edit
+        self.filter = "all"
         self._parse_timer = QTimer(self, singleShot=True, interval=300)
         self._parse_timer.timeout.connect(self._parse_list)
 
@@ -94,37 +90,76 @@ class MainWindow(QMainWindow):
 
     # ---- UI --------------------------------------------------------------------
     def _build_ui(self):
-        # 1. code list
-        list_box = QGroupBox("1  Code list")
-        self.list_edit = QPlainTextEdit()
+        self.statusBar().hide()  # its messages show in the control card
+        self.statusBar().messageChanged.connect(self._on_activity)
+        self.wa_pill = look.WaPill()
+        self.connect_btn = look.button("Open WhatsApp", "outline", "message-circle", theme.NAVY)
+        self.connect_btn.clicked.connect(self._toggle_connection)
+
+        self.hero = look.Hero("codes", [("ok", "Saved", theme.LIVE), ("working", "In progress", theme.SKY),
+                                        ("skipped", "Skipped", theme.ON_NAVY), ("none", "No photos", look.AMBER_ON_NAVY)])
+        self.progress = self.hero.progress
+        self.start_btn = look.button(self.START_TEXT[0], "heroStart", "play", theme.NAVY)
+        self.start_btn.clicked.connect(lambda: self._start(selected_only=False))
+        self.sel_btn = look.button(self.START_TEXT[1], "heroGhost", tip="Only the codes selected in the results")
+        self.sel_btn.clicked.connect(lambda: self._start(selected_only=True))
+        self.stop_btn = look.button("Stop", "heroOutline", "square", "#ffffff")
+        self.stop_btn.clicked.connect(self._stop)
+        out_open_btn = look.button("", "heroIcon", "folder-open", "#ffffff", "Open output folder")
+        out_open_btn.clicked.connect(self._open_output)
+        self.hero.add(self.start_btn, self.sel_btn, self.stop_btn, out_open_btn)
+
+        self.code_card = self._build_codes()
+        self.settings_card = self._build_settings()
+        results = self._build_results()
+        self.log_card = look.LogCard(QPlainTextEdit())
+        self.log_edit = self.log_card.edit
+        self.log_edit.setReadOnly(True)
+        self.log_edit.setMaximumBlockCount(5000)
+
+        self.look = look.ToolLayout(
+            look.Header(self.tool_key, [self.wa_pill, self.connect_btn]), self.hero,
+            [("codes", self.code_card), ("settings", self.settings_card)], [(results, 1), (self.log_card, 0)],
+            [("codes", "Code list"), ("settings", "Settings"), ("results", "Results")], "results",
+            on_mode=self._on_mode)
+        self.setCentralWidget(self.look)
+
+    def _build_codes(self) -> look.Card:
+        self.count_label = QLabel()
+        card = look.Card("list", theme.ACCENT_SOFT, theme.ACCENT, "Code list", self.count_label)
+        self.code_seg = look.Segmented([("codes", "Codes"), ("text", "Text")])
+        self.code_seg.changed.connect(self._set_code_view)
+        card.head_right.addWidget(self.code_seg, 0, Qt.AlignTop)
+        self.chips = look.CodeChips()
+        self.list_edit = QPlainTextEdit(objectName="codes")
         self.list_edit.setLineWrapMode(QPlainTextEdit.NoWrap)
         self.list_edit.setPlaceholderText(
             "Paste your list here (one per line), or open a .txt file:\n\n"
             "2-558\tRealme C85\t26/9\n2-560\tInfinix note 40 5g\t26/9\n3-621\tVivo x27 Pro\t26/9")
+        self.list_edit.setMinimumHeight(170)
         self.list_edit.textChanged.connect(self._parse_timer.start)
-        open_btn = QPushButton("Open .txt…")
+        self.list_edit.installEventFilter(self)
+        card.lay.addWidget(self.chips)
+        card.lay.addWidget(self.list_edit)
+        edit_btn = look.button("Edit list", "soft", "pencil")
+        edit_btn.clicked.connect(lambda: self._set_code_view("text"))
+        open_btn = look.button("Open .txt…", "soft", "file-text")
         open_btn.clicked.connect(self._open_txt)
-        clear_btn = QPushButton("Clear")
+        clear_btn = look.button("Clear", "plain")
         clear_btn.clicked.connect(self.list_edit.clear)
-        self.count_label = QLabel(objectName="count")
-        row = QHBoxLayout()
-        row.addWidget(open_btn)
-        row.addWidget(clear_btn)
-        row.addStretch()
-        row.addWidget(self.count_label)
-        lay = QVBoxLayout(list_box)
-        lay.addWidget(self.list_edit, 1)
-        lay.addLayout(row)
+        card.lay.addLayout(look.row(edit_btn, open_btn, clear_btn, None))
+        return card
 
-        # 2. settings
-        set_box = QGroupBox("2  Settings")
+    def _build_settings(self) -> look.Card:
+        self.settings_summary = QLabel()
+        card = look.Card("sliders-horizontal", theme.WARNING_SOFT, theme.WARNING, "Settings", self.settings_summary)
+
         self.out_edit = QLineEdit()
-        out_btn = QPushButton("Browse…")
+        out_btn = look.button("Change", "mini")
         out_btn.clicked.connect(self._pick_output)
-        out_row = QHBoxLayout()
-        out_row.addWidget(self.out_edit, 1)
-        out_row.addWidget(out_btn)
+        card.lay.addLayout(look.column(look.field("Save to"), look.path_box(self.out_edit, out_btn)))
 
+        # Search in: all chats, all groups, the ticked chats, or one chat
         self.chat_combo = QComboBox()
         self.chat_combo.setEditable(True)
         self.chat_combo.setInsertPolicy(QComboBox.NoInsert)
@@ -134,39 +169,19 @@ class MainWindow(QMainWindow):
         self.chat_combo.setToolTip("Search all chats, only the chats you tick (Ticked chats), or one chat/group "
                                    "(type part of its name).")
         self.chat_combo.currentTextChanged.connect(self._show_picker)
-        self.chats_btn = QPushButton()
-        self.chats_btn.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
-        self.chats_btn.setFixedWidth(36)
-        self.chats_btn.setToolTip("Reload the chat list from WhatsApp")
+        self.chat_combo.currentTextChanged.connect(lambda _: self._refresh_settings_summary())
+        self.chats_btn = look.button("", "iconBtn", "refresh-cw", theme.TEXT_2, "Reload the chat list from WhatsApp")
         self.chats_btn.clicked.connect(lambda: self.worker and self.worker.refresh_chats())
-        chat_row = QHBoxLayout()
-        chat_row.addWidget(self.chat_combo, 1)
-        chat_row.addWidget(self.chats_btn)
+        card.lay.addLayout(look.column(look.row(look.field("Search in"), None, self.chats_btn), self.chat_combo,
+                                       self._build_picker()))
 
-        # Ticked chats: a searchable list of the chats with a tick box each.
-        self.picker = QWidget()
-        self.pick_filter = QLineEdit(placeholderText="Search chats…")
-        self.pick_filter.setClearButtonEnabled(True)
-        self.pick_filter.textChanged.connect(self._filter_picker)
-        self.pick_list = QListWidget()
-        self.pick_list.setMinimumHeight(150)
-        self.pick_list.itemChanged.connect(self._on_pick_changed)
-        self.pick_count = QLabel(objectName="hint")
-        untick_btn = QPushButton("Untick all")
-        untick_btn.clicked.connect(self._untick_all)
-        self.ticked_only_btn = QPushButton("Show ticked only", checkable=True)
-        self.ticked_only_btn.toggled.connect(self._filter_picker)
-        pick_row = FlowLayout()
-        pick_row.addWidget(self.pick_count)
-        pick_row.addWidget(untick_btn)
-        pick_row.addWidget(self.ticked_only_btn)
-        pick_lay = QVBoxLayout(self.picker)
-        pick_lay.setContentsMargins(0, 0, 0, 0)
-        pick_lay.addWidget(self.pick_filter)
-        pick_lay.addWidget(self.pick_list)
-        pick_lay.addLayout(pick_row)
-        self.picker.setVisible(False)
+        self._extra_settings(card)
 
+        # More options: how photos are taken, and how far back
+        self.more_btn = look.DisclosureButton("More options")
+        adv = QWidget()
+        adv.hide()
+        self.more_btn.toggled.connect(adv.setVisible)
         self.mode_combo = QComboBox()
         for label, key in NEIGHBOUR_MODES:
             self.mode_combo.addItem(label, key)
@@ -185,118 +200,89 @@ class MainWindow(QMainWindow):
             "before the oldest date in your list (e.g. 26/9 → from 19/9). A group whose codes\n"
             "have already moved past a code (4a-206, 4a-207… for 4a-205) is read further back\n"
             "for it, up to 30 days more.")
+        for spin in (self.gap_spin, self.lookback_spin):
+            spin.valueChanged.connect(lambda _: self._refresh_settings_summary())
         self.date_check = QCheckBox("Add the date to names  (26/9 → 26-9)")
         self.date_check.toggled.connect(self._parse_timer.start)
         self.skip_check = QCheckBox("Skip codes that are already saved")
+        al = QVBoxLayout(adv)
+        al.setContentsMargins(0, 0, 0, 4)
+        al.setSpacing(12)
+        al.addLayout(look.column(look.field("Take"), self.mode_combo))
+        al.addLayout(look.row(look.column(look.field("Album gap"), self.gap_spin),
+                              look.column(look.field("Look back"), self.lookback_spin), spacing=10))
+        al.addWidget(self.date_check)
+        al.addWidget(self.skip_check)
+        card.lay.addLayout(look.column(look.rule(), self.more_btn, adv, spacing=4))
+        return card
 
-        form = self.settings_form = QFormLayout(set_box)
-        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        form.addRow("Save to", out_row)
-        form.addRow("Search in", chat_row)
-        form.addRow("", self.picker)
-        form.addRow("Take", self.mode_combo)
-        form.addRow("Album gap", self.gap_spin)
-        form.addRow("Look back", self.lookback_spin)
-        form.addRow("", self.date_check)
-        form.addRow("", self.skip_check)
+    def _build_picker(self) -> QWidget:
+        """Ticked chats: a searchable list of the chats with a tick box each."""
+        self.picker = QWidget()
+        self.pick_filter = QLineEdit(placeholderText="Search chats…")
+        self.pick_filter.setClearButtonEnabled(True)
+        self.pick_filter.textChanged.connect(self._filter_picker)
+        self.pick_list = QListWidget()
+        self.pick_list.setMinimumHeight(150)
+        self.pick_list.itemChanged.connect(self._on_pick_changed)
+        self.pick_count = QLabel(objectName="hint")
+        untick_btn = look.button("Untick all", "plain")
+        untick_btn.clicked.connect(self._untick_all)
+        self.ticked_only_btn = look.button("Show ticked only", "plain")
+        self.ticked_only_btn.setCheckable(True)
+        self.ticked_only_btn.toggled.connect(self._filter_picker)
+        flow = FlowLayout()
+        for w in (self.pick_count, untick_btn, self.ticked_only_btn):
+            flow.addWidget(w)
+        lay = QVBoxLayout(self.picker)
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.addWidget(self.pick_filter)
+        lay.addWidget(self.pick_list)
+        lay.addLayout(flow)
+        self.picker.setVisible(False)
+        return self.picker
 
-        # 3. run
-        run_box = QGroupBox("3  Run")
-        self.state_dot = QLabel("●")
-        self.state_label = QLabel()
-        self.state_label.setWordWrap(True)
-        state_row = QHBoxLayout()
-        state_row.addWidget(self.state_dot)
-        state_row.addWidget(self.state_label, 1)
-        self.connect_btn = QPushButton("Open WhatsApp")
-        self.connect_btn.clicked.connect(self._toggle_connection)
-        self.start_btn = QPushButton("Fetch all")
-        self.start_btn.setObjectName("primary")
-        self.start_btn.clicked.connect(lambda: self._start(selected_only=False))
-        self.sel_btn = QPushButton("Fetch selected")
-        self.sel_btn.clicked.connect(lambda: self._start(selected_only=True))
-        self.stop_btn = QPushButton("Stop")
-        self.stop_btn.clicked.connect(self._stop)
-        btn_row = FlowLayout()  # wraps onto two lines in a narrow column
-        for b in (self.connect_btn, self.start_btn, self.sel_btn, self.stop_btn):
-            btn_row.addWidget(b)
-        self.progress = QProgressBar()
-        self.progress.setFormat("%v / %m")
-        self.progress.setRange(0, 1)
-        self.progress.setValue(0)
-        out_open_btn = QPushButton("Open output folder")
-        out_open_btn.clicked.connect(self._open_output)
-        prog_row = QHBoxLayout()
-        prog_row.addWidget(self.progress, 1)
-        prog_row.addWidget(out_open_btn)
-        hint = QLabel("WhatsApp opens in one Edge window that every tool shares. First time: scan the QR "
-                      "code there (WhatsApp › Linked devices); the login is remembered for all tools.")
-        hint.setObjectName("hint")
-        hint.setWordWrap(True)
-        run_lay = QVBoxLayout(run_box)
-        run_lay.addLayout(state_row)
-        run_lay.addLayout(btn_row)
-        run_lay.addLayout(prog_row)
-        run_lay.addWidget(hint)
-
-        left = QWidget()
-        lv = QVBoxLayout(left)
-        lv.setContentsMargins(0, 0, 4, 0)
-        lv.addWidget(list_box, 1)
-        lv.addWidget(set_box)
-        lv.addWidget(run_box)
-        self.list_edit.setMinimumHeight(84)
-
-        # results + log
-        table_box = QGroupBox("Results  (double-click a row to open its images)")
+    def _build_results(self) -> look.Card:
+        card = look.Card("image", theme.SUCCESS_SOFT, theme.SUCCESS, "Results", "Double-click a row to open its images")
+        card.lay.setContentsMargins(18, 18, 18, 6)
+        self.filters = look.FilterPills([(k, label) for k, label, _ in FILTERS])
+        self.filters.changed.connect(self._set_filter)
+        card.lay.addWidget(self.filters)
         self.table = QTableWidget(0, len(COLS))
         self.table.setHorizontalHeaderLabels(COLS)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.verticalHeader().setDefaultSectionSize(28)
         self.table.itemDoubleClicked.connect(self._open_row)
+        look.rows_table(self.table, {0: "code", 1: "name", 2: "pill", 3: "status", 4: "path"}, COL_STATUS)
         hdr = self.table.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(1, QHeaderView.Interactive)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(3, QHeaderView.Interactive)
-        hdr.setSectionResizeMode(4, QHeaderView.Stretch)
-        self.table.setColumnWidth(1, 260)
-        self.table.setColumnWidth(3, 230)
-        QVBoxLayout(table_box).addWidget(self.table)
+        hdr.setSectionResizeMode(0, QHeaderView.Fixed)
+        hdr.setSectionResizeMode(1, QHeaderView.Stretch)
+        hdr.setSectionResizeMode(3, QHeaderView.Stretch)
+        hdr.setSectionResizeMode(4, QHeaderView.Interactive)
+        self.table.setColumnWidth(0, 136)
+        self.table.setColumnWidth(4, 170)
+        self.table.setColumnHidden(2, True)  # the date is on the code's chip
+        card.lay.addWidget(self.table, 1)
+        return card
 
-        log_box = QGroupBox("Log")
-        self.log_edit = QPlainTextEdit()
-        self.log_edit.setReadOnly(True)
-        self.log_edit.setMaximumBlockCount(5000)
-        self.log_edit.setFont(QFont("Consolas", 9))
-        QVBoxLayout(log_box).addWidget(self.log_edit)
-
-        self.right_split = QSplitter(Qt.Vertical)
-        self.right_split.addWidget(table_box)
-        self.right_split.addWidget(log_box)
-        self.right_split.setSizes([520, 220])
-
-        # The settings column scrolls when the window is too short for it (a 768 px laptop screen).
-        self.main_split = QSplitter(Qt.Horizontal, childrenCollapsible=False)
-        self.main_split.addWidget(scrollable(left))
-        self.main_split.addWidget(self.right_split)
-        self.main_split.setStretchFactor(1, 1)
-        self.main_split.setSizes([480, 840])
-        self.right_split.setMinimumSize(260, 220)
-
-        central = QWidget()
-        cl = QVBoxLayout(central)
-        cl.setContentsMargins(12, 6, 12, 10)
-        cl.addWidget(self.main_split)
-        self.setCentralWidget(central)
+    def _on_mode(self, mode: str):
+        self.table.setColumnHidden(COL_PATH, mode != "wide")
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        stacked = event.size().width() < STACK_BELOW
-        if stacked != (self.main_split.orientation() == Qt.Vertical):
-            self.main_split.setOrientation(Qt.Vertical if stacked else Qt.Horizontal)
-            self.main_split.setSizes([1000, 1000] if stacked else [480, 840])
+        self.look.resize_to(event.size().width())
+
+    # ---- what a tool built on this page adds ------------------------------------------
+    def _extra_settings(self, card: look.Card):
+        """More settings, shown on the Settings card before "More options"."""
+
+    def _settings_summary(self) -> list[str]:
+        chat = self.chat_combo.currentText().strip() or ALL_CHATS
+        return [f"Search in {chat}"]
+
+    def _hero_override(self) -> tuple[str, str] | None:
+        """(title, line under it) for the control card while something else than fetching runs."""
+        return None
 
     # ---- settings --------------------------------------------------------------
     def _load_settings(self):
@@ -316,6 +302,7 @@ class MainWindow(QMainWindow):
         self.lookback_spin.setValue(int(s.value("lookback_days", 10)))
         self.date_check.setChecked(s.value("include_date", False, type=bool))
         self.skip_check.setChecked(s.value("skip_existing", True, type=bool))
+        self._refresh_settings_summary()
 
     def _save_settings(self):
         s = self.settings
@@ -328,6 +315,11 @@ class MainWindow(QMainWindow):
         s.setValue("include_date", self.date_check.isChecked())
         s.setValue("skip_existing", self.skip_check.isChecked())
         s.sync()
+
+    def _refresh_settings_summary(self):
+        if hasattr(self, "more_btn"):
+            self.settings_summary.setText(" · ".join(self._settings_summary()))
+            self.more_btn.summary.setText(f"{self.gap_spin.value()} min gap · {self.lookback_spin.value()} days back")
 
     def default_output_dir(self) -> Path:
         return user_dir(QStandardPaths.PicturesLocation, "Pictures") / self.title
@@ -359,7 +351,15 @@ class MainWindow(QMainWindow):
             prev = self._existing(out_dir, it.base_name(include_date)) if out_dir.is_dir() else None
             if prev:
                 self._set_row(r, "skipped", "Saved earlier", str(prev))
-        self.count_label.setText(f"{len(self.items)} code(s)")
+        self.chips.set_items(self.items)
+        n = len(self.items)
+        self.count_label.setText(f"{look.plain_count(n, 'code')} · {look.plain_count(self.chips.groups, 'list')}" if n
+                                 else "Paste your list (one per line), or open a .txt file")
+        self.progress.setRange(0, max(n, 1))
+        self.progress.setValue(0)
+        self.look.set_tab_label("codes", f"Code list  {n}" if n else "Code list")
+        self._refresh_code_view()
+        self._refresh_counts()
         self._update_buttons()
 
     def _set_row(self, row: int, kind: str, text: str, path: str):
@@ -368,21 +368,94 @@ class MainWindow(QMainWindow):
         status = self.table.item(row, COL_STATUS)
         status.setText(text)
         status.setToolTip(text)
-        fg, bg = ROW_COLORS.get(kind, ("#202124", "#ffffff"))
-        status.setForeground(QColor(fg))
-        status.setBackground(QColor(bg))
+        kind = kind or ("queued" if text == "Queued" else "")
+        status.setData(KIND, kind)
         if path or kind in ("working", "none", "error", ""):
             cell = self.table.item(row, COL_PATH)
             cell.setText(Path(path).name if path else "")
             cell.setToolTip(path)
             cell.setData(Qt.UserRole, path)
         if kind == "working":
+            self.working_row, self.working_text = row, text
             self.table.scrollToItem(status)
+        self._refresh_counts()
+        self._filter_row(row)
+        self._refresh_hero()
 
     def _open_row(self, item: QTableWidgetItem):
         path = self.table.item(item.row(), COL_PATH).data(Qt.UserRole)
         if path and Path(path).exists():
             os.startfile(path)  # noqa: S606 - open in Explorer / image viewer
+
+    def eventFilter(self, obj, event):
+        if obj is self.list_edit and event.type() == QEvent.FocusOut:
+            QTimer.singleShot(0, self._refresh_code_view)
+        return super().eventFilter(obj, event)
+
+    def _set_code_view(self, view: str):
+        self.code_view = view
+        self._refresh_code_view()
+        if view == "text":
+            self.list_edit.setFocus()
+
+    def _refresh_code_view(self):
+        """Chips while there are codes and the text is not being edited; else the text."""
+        chips = self.code_view == "codes" and bool(self.items) and not self.list_edit.hasFocus()
+        self.chips.setVisible(chips)
+        self.list_edit.setVisible(not chips)
+        self.code_seg.set("codes" if chips else "text")
+
+    # ---- results, counts and the control card ---------------------------------------------
+    def _kinds(self) -> Counter:
+        return Counter(self.table.item(r, COL_STATUS).data(KIND) or "" for r in range(self.table.rowCount())
+                       if self.table.item(r, COL_STATUS) is not None)
+
+    def _refresh_counts(self):
+        n = self._kinds()
+        for key, label, kinds in FILTERS:
+            count = self.table.rowCount() if kinds is None else sum(n[k] for k in kinds)
+            self.filters.set_count(key, count)
+            if key in self.hero.counts:
+                self.hero.counts[key].set_value(count)
+        done = sum(n[k] for k in DONE_KINDS)
+        self.look.set_tab_label("results", f"Results  {done}/{self.table.rowCount()}" if self.table.rowCount()
+                                else "Results")
+
+    def _set_filter(self, key: str):
+        self.filter = key
+        for r in range(self.table.rowCount()):
+            self._filter_row(r)
+
+    def _filter_row(self, row: int):
+        kinds = next(f[2] for f in FILTERS if f[0] == self.filter)
+        item = self.table.item(row, COL_STATUS)
+        self.table.setRowHidden(row, kinds is not None and (item is None or item.data(KIND) not in kinds))
+
+    def _on_activity(self, text: str):
+        self.activity = text
+        self._refresh_hero()
+
+    def _refresh_hero(self):
+        """The control card's words: what is happening, on which code, and what it needs next."""
+        n = len(self.items)
+        kicker, color = look.wa_kicker(self.wa_state, self.job_running)
+        done = sum(self._kinds()[k] for k in DONE_KINDS)
+        override = self._hero_override() if self.job_running else None
+        if override:
+            title, sub = override
+        elif self.job_running and self.working_row is not None and self.working_row < n:
+            it = self.items[self.working_row]
+            title, sub = f"{it.code} {it.name}".strip(), self.working_text
+        elif self.job_running:
+            title, sub = "Starting…", self.activity or self.wa_message
+        elif not n:
+            title, sub = "Paste your code list", self.wa_message
+        elif done:
+            title, sub = f"{done} of {look.plain_count(n, 'code')} done", self.wa_message
+        else:
+            title, sub = f"{look.plain_count(n, 'code')} ready", self.wa_message
+        self.hero.set_status(kicker, color, title, sub)
+        self.hero.show_hint(not self.job_running and self.wa_state in ("idle", "closed"))
 
     # ---- actions ---------------------------------------------------------------
     def _pick_output(self):
@@ -470,7 +543,7 @@ class MainWindow(QMainWindow):
         if selected_only:
             rows = sorted({i.row() for i in self.table.selectionModel().selectedRows()})
             if not rows:
-                QMessageBox.information(self, "Nothing selected", "Select one or more rows in the table first.")
+                QMessageBox.information(self, "Nothing selected", "Select one or more rows in the results first.")
                 return
         else:
             rows = list(range(len(self.items)))
@@ -489,6 +562,7 @@ class MainWindow(QMainWindow):
         }
         self._save_settings()
         self.job_running = True
+        self.working_row, self.activity = None, ""
         self.progress.setRange(0, len(job_rows))
         self.progress.setValue(0)
         if self.worker and self.wa_state == "ready":
@@ -588,11 +662,9 @@ class MainWindow(QMainWindow):
 
     # ---- helpers ---------------------------------------------------------------
     def _set_state(self, state: str, message: str):
-        self.wa_state = state
-        color = STATE_COLORS.get(state, "#9aa0a6")
-        self.state_dot.setStyleSheet(f"color: {color}; font-size: 14pt;")
-        self.state_label.setText(message)
-        self.state_label.setStyleSheet(f"color: {color if state in ('qr', 'error') else theme.TEXT};")
+        self.wa_state, self.wa_message = state, message
+        self.wa_pill.set_state(state, message)
+        self._refresh_hero()
 
     def is_busy(self) -> bool:
         return self.job_running
@@ -612,11 +684,13 @@ class MainWindow(QMainWindow):
         self.chats_btn.setEnabled(connected and self.wa_state == "ready" and not self.job_running)
         self.list_edit.setReadOnly(self.job_running)
         self.picker.setEnabled(not self.job_running)
+        self._refresh_hero()
 
     def _log(self, text: str):
         stamp = time.strftime("%H:%M:%S")
         for line in str(text).rstrip().splitlines() or [""]:
             self.log_edit.appendPlainText(f"{stamp}  {line}")
+        self.log_card.set_lines(self.log_edit.blockCount())
 
     def closeEvent(self, event):
         self._save_settings()

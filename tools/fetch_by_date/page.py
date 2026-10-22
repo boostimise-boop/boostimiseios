@@ -6,6 +6,9 @@ range, until it reaches one older than From. Photos are saved as
 <folder>\\<chat>\\<YYYY-MM-DD>\\<date>_<time>_<hash>.jpg with a download_log.csv per chat; a photo
 already saved in an earlier run is skipped (by its contents, recorded in <data>\\fetch_by_date).
 Was the separate WhatsApp Image Fetcher app (wpimagefetch).
+
+The page has the look of core/look.py: the run on a navy control card, the chat, dates and folder
+as cards, and the log beside them.
 """
 from __future__ import annotations
 
@@ -15,28 +18,21 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QDate, QSettings, QStandardPaths, Qt, QTime, Signal
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QComboBox, QCompleter, QDateEdit, QFileDialog, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSplitter, QStyle,
-    QTimeEdit, QVBoxLayout, QWidget,
+    QComboBox, QCompleter, QDateEdit, QFileDialog, QGridLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
+    QPlainTextEdit, QTimeEdit,
 )
 
-from core import theme
+from core import look, theme
 from core.paths import data_dir
-from core.ui import FlowLayout, scrollable
-from tools.whatsapp_fetch.page import STACK_BELOW, STATE_COLORS
+from core.ui import FlowLayout
 
 from .helpers import forget_history, sanitize_filename
 from .worker import FetchByDateWorker
 
-STYLE = f"""
-QLabel#hint {{ color: {theme.TEXT_2}; font-size: 9pt; }}
-QLabel#count {{ background: {theme.ACCENT_SOFT}; color: {theme.ACCENT_DARK}; font-weight: 600; font-size: 9pt;
-               border-radius: 6px; padding: 3px 9px; }}
-QProgressBar {{ min-height: 20px; }}
-"""
-COUNTS = (("found", "Found"), ("downloaded", "Saved"), ("skipped", "Already saved"), ("failed", "Failed"))
+# the worker's counts, and how the control card shows them
+COUNTS = (("found", "Found", theme.SKY), ("downloaded", "Saved", theme.LIVE),
+          ("skipped", "Already saved", theme.ON_NAVY), ("failed", "Failed", look.RED_ON_NAVY))
 
 
 def default_folder() -> Path:
@@ -51,12 +47,16 @@ class FetchByDatePage(QMainWindow):
         super().__init__()
         self.data_dir = data_dir("fetch_by_date")
         self.manifest_dir = self.data_dir / "downloads_manifest"
-        self.setStyleSheet(STYLE)
+        self.setStyleSheet(look.STYLE)
         self.settings = QSettings(str(self.data_dir / "settings.ini"), QSettings.IniFormat)
         self.worker: FetchByDateWorker | None = None
         self.wa_state = "idle"
+        self.wa_message = "Not connected"
         self.job_running = False
         self.pending_job: tuple | None = None
+        self.counts: dict = {}
+        self.activity = ""
+        self.last_summary = ""
 
         self._build_ui()
         self._load_settings()
@@ -65,160 +65,101 @@ class FetchByDatePage(QMainWindow):
 
     # ---- UI --------------------------------------------------------------------
     def _build_ui(self):
-        # 1. chat
-        chat_box = QGroupBox("1  Chat")
+        self.statusBar().hide()  # its messages show in the control card
+        self.statusBar().messageChanged.connect(self._on_activity)
+        self.wa_pill = look.WaPill()
+        self.connect_btn = look.button("Open WhatsApp", "outline", "message-circle", theme.NAVY)
+        self.connect_btn.clicked.connect(self._toggle_connection)
+
+        self.hero = look.Hero("photos", [(k, label, color) for k, label, color in COUNTS], counts_always=True,
+                              hint_text=look.WHATSAPP_HINT + " While a fetch runs, leave that window alone: "
+                                                             "this tool is clicking in it.")
+        self.progress = self.hero.progress
+        self.start_btn = look.button("Start", "heroStart", "play", theme.NAVY)
+        self.start_btn.clicked.connect(self._start)
+        self.stop_btn = look.button("Stop", "heroOutline", "square", "#ffffff")
+        self.stop_btn.clicked.connect(self._stop)
+        folder_btn = look.button("", "heroIcon", "folder-open", "#ffffff", "Open the chat's folder")
+        folder_btn.clicked.connect(self._open_folder)
+        self.hero.add(self.start_btn, self.stop_btn, folder_btn)
+
+        # the chat
+        chat_card = look.Card("message-circle", theme.ACCENT_SOFT, theme.ACCENT, "Chat",
+                              "The group or chat to save the photos of")
         self.chat_combo = QComboBox()
         self.chat_combo.setEditable(True)
         self.chat_combo.setInsertPolicy(QComboBox.NoInsert)
         self.chat_combo.lineEdit().setPlaceholderText("Group or chat name")
         self.chat_combo.completer().setFilterMode(Qt.MatchContains)
         self.chat_combo.completer().setCompletionMode(QCompleter.PopupCompletion)
-        self.chats_btn = QPushButton()
-        self.chats_btn.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
-        self.chats_btn.setFixedWidth(36)
-        self.chats_btn.setToolTip("Reload the chat list from WhatsApp")
+        self.chat_combo.currentTextChanged.connect(lambda _: self._refresh_hero())
+        self.chats_btn = look.button("", "iconBtn", "refresh-cw", theme.TEXT_2, "Reload the chat list from WhatsApp")
         self.chats_btn.clicked.connect(lambda: self.worker and self.worker.refresh_chats())
-        chat_row = QHBoxLayout()
-        chat_row.addWidget(self.chat_combo, 1)
-        chat_row.addWidget(self.chats_btn)
-        chat_hint = QLabel("The list has the chats WhatsApp shows at the top of its chat list. If yours is not "
-                           "there, type its exact name.")
-        chat_hint.setObjectName("hint")
-        chat_hint.setWordWrap(True)
-        chat_lay = QVBoxLayout(chat_box)
-        chat_lay.addLayout(chat_row)
-        chat_lay.addWidget(chat_hint)
+        chat_card.head_right.addWidget(self.chats_btn, 0, Qt.AlignTop)
+        chat_card.lay.addWidget(self.chat_combo)
+        chat_card.lay.addWidget(look.hint("The list has the chats WhatsApp shows at the top of its chat list. "
+                                          "If yours is not there, type its exact name."))
 
-        # 2. date and time range
-        range_box = QGroupBox("2  Date and time")
+        # the date and time range
+        self.range_card = look.Card("calendar", theme.WARNING_SOFT, theme.WARNING, "Date and time")
         self.from_date = QDateEdit(calendarPopup=True, displayFormat="dd/MM/yyyy")
         self.from_time = QTimeEdit(displayFormat="HH:mm:ss")
         self.to_date = QDateEdit(calendarPopup=True, displayFormat="dd/MM/yyyy")
         self.to_time = QTimeEdit(displayFormat="HH:mm:ss")
+        for w in (self.from_date, self.from_time, self.to_date, self.to_time):
+            (w.dateChanged if isinstance(w, QDateEdit) else w.timeChanged).connect(lambda _: self._show_range())
         grid = QGridLayout()
-        grid.addWidget(QLabel("From"), 0, 0)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(10)
+        grid.addWidget(look.field("From"), 0, 0)
         grid.addWidget(self.from_date, 0, 1)
         grid.addWidget(self.from_time, 0, 2)
-        grid.addWidget(QLabel("To"), 1, 0)
+        grid.addWidget(look.field("To"), 1, 0)
         grid.addWidget(self.to_date, 1, 1)
         grid.addWidget(self.to_time, 1, 2)
         grid.setColumnStretch(1, 1)
         grid.setColumnStretch(2, 1)
-        quick = FlowLayout()
+        quick = FlowLayout(hspace=6, vspace=6)
         for label, back, days in (("Today", 0, 1), ("Yesterday", 1, 1), ("Last 7 days", 6, 7), ("Last 30 days", 29, 30)):
-            btn = QPushButton(label)
+            btn = look.button(label, "soft")
             btn.clicked.connect(lambda _=False, b=back, d=days: self._set_days(b, d))
             quick.addWidget(btn)
-        range_hint = QLabel("Both ends are included, to the second. The times start at 00:00:00 and "
-                            "23:59:59, so leaving them gives whole days.")
-        range_hint.setObjectName("hint")
-        range_hint.setWordWrap(True)
-        range_lay = QVBoxLayout(range_box)
-        range_lay.addLayout(grid)
-        range_lay.addLayout(quick)
-        range_lay.addWidget(range_hint)
+        self.range_card.lay.addLayout(grid)
+        self.range_card.lay.addLayout(quick)
+        self.range_card.lay.addWidget(look.hint("Both ends are included, to the second. The times start at 00:00:00 "
+                                                "and 23:59:59, so leaving them gives whole days."))
 
-        # 3. where to save
-        save_box = QGroupBox("3  Save to")
+        # where to save
+        save_card = look.Card("folder", theme.SUCCESS_SOFT, theme.SUCCESS, "Save to",
+                              "A folder per chat, a sub-folder per day")
         self.folder_edit = QLineEdit()
-        browse_btn = QPushButton("Change…")
+        browse_btn = look.button("Change", "mini")
         browse_btn.clicked.connect(self._browse)
-        self.open_btn = QPushButton("Open")
-        self.open_btn.setToolTip("Open the folder of the chosen chat (or the main folder)")
+        self.open_btn = look.button("Open", "mini", tip="Open the folder of the chosen chat (or the main folder)")
         self.open_btn.clicked.connect(self._open_folder)
-        folder_row = QHBoxLayout()
-        folder_row.addWidget(self.folder_edit, 1)
-        folder_row.addWidget(browse_btn)
-        folder_row.addWidget(self.open_btn)
-        save_hint = QLabel("Each chat gets a folder with one sub-folder per day and a download_log.csv. "
-                           "Photos already in the folder are skipped; deleted ones are saved again.")
-        save_hint.setObjectName("hint")
-        save_hint.setWordWrap(True)
-        self.forget_btn = QPushButton("Forget saved photos…")
+        self.forget_btn = look.button("Forget saved photos…", "plain", "rotate-ccw", theme.TEXT_2)
         self.forget_btn.setToolTip("Forget which photos were already saved, so the next fetch saves them again.\n"
                                    "The photo files and the WhatsApp login are kept.")
         self.forget_btn.clicked.connect(self._forget)
-        forget_row = QHBoxLayout()
-        forget_row.addStretch()
-        forget_row.addWidget(self.forget_btn)
-        save_lay = QVBoxLayout(save_box)
-        save_lay.addLayout(folder_row)
-        save_lay.addWidget(save_hint)
-        save_lay.addLayout(forget_row)
+        save_card.lay.addWidget(look.path_box(self.folder_edit, browse_btn, self.open_btn))
+        save_card.lay.addWidget(look.hint("Each chat gets a folder with one sub-folder per day and a download_log.csv. "
+                                          "Photos already in the folder are skipped; deleted ones are saved again."))
+        save_card.lay.addLayout(look.row(None, self.forget_btn))
 
-        # 4. run
-        run_box = QGroupBox("4  Run")
-        self.state_dot = QLabel("●")
-        self.state_label = QLabel()
-        self.state_label.setWordWrap(True)
-        state_row = QHBoxLayout()
-        state_row.addWidget(self.state_dot)
-        state_row.addWidget(self.state_label, 1)
-        self.connect_btn = QPushButton("Open WhatsApp")
-        self.connect_btn.clicked.connect(self._toggle_connection)
-        self.start_btn = QPushButton("Start")
-        self.start_btn.setObjectName("primary")
-        self.start_btn.clicked.connect(self._start)
-        self.stop_btn = QPushButton("Stop")
-        self.stop_btn.clicked.connect(self._stop)
-        btn_row = FlowLayout()  # wraps onto two lines in a narrow column
-        for b in (self.connect_btn, self.start_btn, self.stop_btn):
-            btn_row.addWidget(b)
-        self.progress = QProgressBar()
-        self.progress.setTextVisible(False)
-        self.progress.setRange(0, 1)
-        self.progress.setValue(0)
-        self.count_labels = {}
-        count_row = FlowLayout()
-        for key, _ in COUNTS:
-            self.count_labels[key] = QLabel(objectName="count")
-            count_row.addWidget(self.count_labels[key])
-        self._on_counts({})
-        wa_hint = QLabel("WhatsApp opens in one Edge window that every tool shares; scan its QR code once. "
-                         "While a fetch runs, leave that window alone: this tool is clicking in it.")
-        wa_hint.setObjectName("hint")
-        wa_hint.setWordWrap(True)
-        run_lay = QVBoxLayout(run_box)
-        run_lay.addLayout(state_row)
-        run_lay.addLayout(btn_row)
-        run_lay.addWidget(self.progress)
-        run_lay.addLayout(count_row)
-        run_lay.addWidget(wa_hint)
-
-        left = QWidget()
-        lv = QVBoxLayout(left)
-        lv.setContentsMargins(0, 0, 4, 0)
-        for box in (chat_box, range_box, save_box, run_box):
-            lv.addWidget(box)
-        lv.addStretch()
-
-        log_box = QGroupBox("Log")
-        self.log_edit = QPlainTextEdit()
+        self.log_card = look.LogCard(QPlainTextEdit(), height=220, grow=True)
+        self.log_edit = self.log_card.edit
         self.log_edit.setReadOnly(True)
         self.log_edit.setMaximumBlockCount(20_000)  # long runs log a line per photo
-        self.log_edit.setFont(QFont("Consolas", 9))
-        QVBoxLayout(log_box).addWidget(self.log_edit)
-        log_box.setMinimumSize(260, 220)
 
-        # The settings column scrolls when the window is too short for it (a 768 px laptop screen).
-        self.main_split = QSplitter(Qt.Horizontal, childrenCollapsible=False)
-        self.main_split.addWidget(scrollable(left))
-        self.main_split.addWidget(log_box)
-        self.main_split.setStretchFactor(1, 1)
-        self.main_split.setSizes([480, 840])
-
-        central = QWidget()
-        cl = QVBoxLayout(central)
-        cl.setContentsMargins(12, 6, 12, 10)
-        cl.addWidget(self.main_split)
-        self.setCentralWidget(central)
+        self.look = look.ToolLayout(
+            look.Header("fetch_by_date", [self.wa_pill, self.connect_btn]), self.hero,
+            [("setup", chat_card), ("setup", self.range_card), ("save", save_card)], [(self.log_card, 1)],
+            [("setup", "Chat & dates"), ("save", "Save to"), ("log", "Log")], "log")
+        self.setCentralWidget(self.look)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        stacked = event.size().width() < STACK_BELOW
-        if stacked != (self.main_split.orientation() == Qt.Vertical):
-            self.main_split.setOrientation(Qt.Vertical if stacked else Qt.Horizontal)
-            self.main_split.setSizes([1000, 1000] if stacked else [480, 840])
+        self.look.resize_to(event.size().width())
 
     # ---- settings --------------------------------------------------------------
     def _load_settings(self):
@@ -240,6 +181,14 @@ class FetchByDatePage(QMainWindow):
         self.from_time.setTime(QTime(0, 0, 0))
         self.to_date.setDate(first.addDays(days - 1))
         self.to_time.setTime(QTime(23, 59, 59))
+
+    def _range_text(self) -> str:
+        return (f"{self.from_date.date().toString('dd/MM/yyyy')} {self.from_time.time().toString('HH:mm')}  →  "
+                f"{self.to_date.date().toString('dd/MM/yyyy')} {self.to_time.time().toString('HH:mm')}")
+
+    def _show_range(self):
+        self.range_card.set_subtitle(self._range_text())
+        self._refresh_hero()
 
     def _folder(self) -> Path:
         return Path(self.folder_edit.text().strip() or default_folder())
@@ -289,9 +238,9 @@ class FetchByDatePage(QMainWindow):
             QMessageBox.warning(self, "Save to", f"Can't use the folder {folder}:\n{e}")
             return
         self._save_settings()
-        self._on_counts({})
         self.job_running = True
-        self.progress.setRange(0, 0)  # the number of photos isn't known up front
+        self.activity = self.last_summary = ""
+        self._on_counts({})
         self._log(f"Fetching '{chat}' from {from_dt:%d/%m/%Y %H:%M:%S} to {to_dt:%d/%m/%Y %H:%M:%S}…")
         job = (chat, from_dt, to_dt, folder)
         if self.worker and self.wa_state == "ready":
@@ -349,15 +298,30 @@ class FetchByDatePage(QMainWindow):
         self._log(f"{len(chats)} chats loaded into the list.")
 
     def _on_counts(self, counts: dict):
-        for key, label in COUNTS:
-            self.count_labels[key].setText(f"{label}: {counts.get(key, 0)}")
+        """The counts on the control card, and its ring: the photos dealt with of those found so far
+        (going round while none is found yet)."""
+        self.counts = dict(counts)
+        for key, _, _ in COUNTS:
+            self.hero.counts[key].set_value(counts.get(key, 0))
+        found = counts.get("found", 0)
+        done = sum(counts.get(k, 0) for k in ("downloaded", "skipped", "failed"))
+        if self.job_running and not found:
+            self.progress.setRange(0, 0)
+        else:
+            self.progress.setRange(0, max(found, 1))
+            self.progress.setValue(min(done, max(found, 1)))
+        self._refresh_hero()
+
+    def _on_activity(self, text: str):
+        self.activity = text
+        self._refresh_hero()
 
     def _job_ended(self, success: bool, summary: str):
         if not self.job_running:
             return
         self.job_running = False
-        self.progress.setRange(0, 1)
-        self.progress.setValue(1 if success else 0)
+        self.last_summary = summary
+        self._on_counts(self.counts)
         self._log(summary)
         self.statusBar().showMessage(summary, 15000)
         self._update_buttons()
@@ -375,11 +339,23 @@ class FetchByDatePage(QMainWindow):
 
     # ---- helpers ---------------------------------------------------------------
     def _set_state(self, state: str, message: str):
-        self.wa_state = state
-        color = STATE_COLORS.get(state, "#9aa0a6")
-        self.state_dot.setStyleSheet(f"color: {color}; font-size: 14pt;")
-        self.state_label.setText(message)
-        self.state_label.setStyleSheet(f"color: {color if state in ('qr', 'error') else theme.TEXT};")
+        self.wa_state, self.wa_message = state, message
+        self.wa_pill.set_state(state, message)
+        self._refresh_hero()
+
+    def _refresh_hero(self):
+        if not hasattr(self, "hero"):
+            return
+        chat = self.chat_combo.currentText().strip()
+        kicker, color = look.wa_kicker(self.wa_state, self.job_running)
+        if self.job_running:
+            title, sub = f"Fetching {chat}", self.activity or self._range_text()
+        elif not chat:
+            title, sub = "Pick a chat", self.wa_message
+        else:
+            title, sub = chat, self.last_summary or self._range_text()
+        self.hero.set_status(kicker, color, title, sub)
+        self.hero.show_hint(not self.job_running and self.wa_state in ("idle", "closed"))
 
     def is_busy(self) -> bool:
         return self.job_running
@@ -399,11 +375,13 @@ class FetchByDatePage(QMainWindow):
         self.forget_btn.setEnabled(not running)
         for w in (self.chat_combo, self.from_date, self.from_time, self.to_date, self.to_time, self.folder_edit):
             w.setEnabled(not running)
+        self._refresh_hero()
 
     def _log(self, text: str):
         stamp = time.strftime("%H:%M:%S")
         for line in str(text).rstrip().splitlines() or [""]:
             self.log_edit.appendPlainText(f"{stamp}  {line}")
+        self.log_card.set_lines(self.log_edit.blockCount())
 
     def closeEvent(self, event):
         self._save_settings()

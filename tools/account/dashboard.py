@@ -213,7 +213,7 @@ class DashboardPage(W.WebPage):
         self.badges = QHBoxLayout()
         self.badges.setSpacing(8)
         greet = W.v_col(self.hello, self.badges, spacing=6)
-        go = W.Button("Enhance photos", "sparkles", "gradient", "lg", height=40)
+        go = W.Button("Enhance photos", "sparkles", "brand", "lg", height=40)
         go.clicked.connect(lambda: self._open("photo_enhancer"))
         lay.addLayout(W.h_row(self.avatar, greet, None, go, spacing=16))
 

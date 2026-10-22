@@ -152,39 +152,47 @@ struct Chip: View {
     }
 }
 
-/// Lays children out in rows, wrapping like text.
+/// Lays children out in rows, wrapping like text; the children of a row share its middle line
+/// (a borderless link beside a bordered button).
 struct FlowLayout: Layout {
     var spacing: CGFloat = 6
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxW = proposal.width ?? .infinity
-        var x: CGFloat = 0, y: CGFloat = 0, rowH: CGFloat = 0, width: CGFloat = 0
+    /// The children and their sizes, row by row, for a width.
+    private func lines(_ subviews: Subviews, width maxW: CGFloat) -> [[(view: LayoutSubview, size: CGSize)]] {
+        var lines: [[(view: LayoutSubview, size: CGSize)]] = [[]]
+        var x: CGFloat = 0
         for s in subviews {
             let size = s.sizeThatFits(.unspecified)
             if x > 0 && x + size.width > maxW {
-                y += rowH + spacing
+                lines.append([])
                 x = 0
-                rowH = 0
             }
+            lines[lines.count - 1].append((view: s, size: size))
             x += size.width + spacing
-            rowH = max(rowH, size.height)
-            width = max(width, x - spacing)
         }
-        return CGSize(width: proposal.width ?? width, height: y + rowH)
+        return lines
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = self.lines(subviews, width: proposal.width ?? .infinity)
+        var width: CGFloat = 0, height: CGFloat = 0
+        for (i, row) in rows.enumerated() {
+            width = max(width, row.reduce(0) { $0 + $1.size.width } + spacing * CGFloat(max(0, row.count - 1)))
+            height += (row.map { $0.size.height }.max() ?? 0) + (i > 0 ? spacing : 0)
+        }
+        return CGSize(width: proposal.width ?? width, height: height)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX, y = bounds.minY, rowH: CGFloat = 0
-        for s in subviews {
-            let size = s.sizeThatFits(.unspecified)
-            if x > bounds.minX && x + size.width > bounds.maxX {
-                y += rowH + spacing
-                x = bounds.minX
-                rowH = 0
+        var y = bounds.minY
+        for row in self.lines(subviews, width: bounds.width) {
+            let rowH = row.map { $0.size.height }.max() ?? 0
+            var x = bounds.minX
+            for (view, size) in row {
+                view.place(at: CGPoint(x: x, y: y + (rowH - size.height) / 2), proposal: ProposedViewSize(size))
+                x += size.width + spacing
             }
-            s.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-            x += size.width + spacing
-            rowH = max(rowH, size.height)
+            y += rowH + spacing
         }
     }
 }

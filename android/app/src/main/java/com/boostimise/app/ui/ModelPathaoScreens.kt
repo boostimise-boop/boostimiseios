@@ -133,11 +133,15 @@ fun PathaoScreen(activity: Activity) {
             Text(t.cur?.let { "${it.code} · ${it.status}" } ?: t.state, fontSize = 13.sp, maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
             if (t.attention.isNotEmpty()) Hint(t.attention, Brand.ERROR)
+            // the buttons wrap on a narrow screen or with a large font, instead of being squeezed
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (t.running) TextButton({ t.pause() }) { Text("Pause") } else TextButton({ t.start() }) { Text("Start") }
-                TextButton({ t.markSaved() }, enabled = t.cur != null) { Text("Saved → Next") }
-                TextButton({ t.skip() }) { Text("Skip") }
-                Spacer(Modifier.weight(1f))
+                Box(Modifier.weight(1f)) {
+                    Chips {
+                        if (t.running) TextButton({ t.pause() }) { Text("Pause") } else TextButton({ t.start() }) { Text("Start") }
+                        TextButton({ t.markSaved() }, enabled = t.cur != null) { Text("Saved → Next") }
+                        TextButton({ t.skip() }) { Text("Skip") }
+                    }
+                }
                 TextButton({ t.fold(false) }) { Text("More ▾") }
             }
         }
@@ -148,7 +152,7 @@ fun PathaoScreen(activity: Activity) {
                 Box(Modifier.weight(1f)) { WaBanner() }
                 TextButton({ t.fold(true) }) { Text("Less ▴") }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Chips {
                 OutlinedButton({ open.launch(arrayOf("text/*")) }) { Text("Open list") }
                 OutlinedButton({ paste(ctx)?.let { t.pasteList(it) } }) { Text("Paste list") }
                 TextButton({ settings = true }) { Text("Settings") }
@@ -161,13 +165,13 @@ fun PathaoScreen(activity: Activity) {
             OutlinedButton({ t.checkPathao() }, enabled = !t.checking && t.items.isNotEmpty()) {
                 Text(if (t.checking) "Checking Pathao…" else "Check Pathao")
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Chips {
                 if (t.running) OutlinedButton({ t.pause() }) { Text("Pause") } else Button({ t.start() }) { Text("Start") }
                 OutlinedButton({ t.markSaved() }, enabled = t.cur != null) { Text("Saved → Next") }
                 TextButton({ t.skip() }) { Text("Skip") }
             }
             t.cur?.let { item -> CurrentOrder(item, t) }
-            Row {
+            Chips {
                 TextButton({ showList = !showList }) { Text(if (showList) "Hide list" else "Show list") }
                 TextButton({ showLog = !showLog }) { Text(if (showLog) "Hide log" else "Show log") }
                 if (t.listName == "pasted list") TextButton({ copy(ctx, t.listText) }) { Text("Copy list") }
@@ -207,7 +211,7 @@ private fun CurrentOrder(item: PathaoTool.Item, t: PathaoTool) {
             OutlinedTextField(phone2, { phone2 = it }, label = { Text("Phone 2") }, singleLine = true, modifier = Modifier.weight(1f))
         }
         OutlinedTextField(address, { address = it }, label = { Text("Address") }, modifier = Modifier.fillMaxWidth())
-        Row {
+        Chips {
             Button({ t.refill(o.copy(name = name, phone = phone, phone2 = phone2, amount = amount, address = address)) }) { Text("Fill again") }
             TextButton({ t.reread(item) }) { Text("Read WhatsApp again") }
         }

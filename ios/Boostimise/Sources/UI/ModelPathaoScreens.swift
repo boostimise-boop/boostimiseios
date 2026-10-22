@@ -94,7 +94,8 @@ struct PathaoScreen: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     WaBanner()
-                    HStack(spacing: 8) {
+                    // the buttons wrap on a narrow screen instead of being squeezed
+                    Flow(spacing: 8) {
                         SecondaryButton("Open list") { importing = true }
                         SecondaryButton("Paste list") { if let p = pasteText() { t.pasteList(p) } }
                         LinkButton("Settings") { settings = true }
@@ -107,7 +108,7 @@ struct PathaoScreen: View {
                     if !t.attention.isEmpty { Hint(t.attention, Brand.error) }
                     // which codes of the list already have a Pathao order (by Merchant Order ID); the phone is written in the list
                     SecondaryButton(t.checking ? "Checking Pathao…" : "Check Pathao", enabled: !t.checking && !t.items.isEmpty) { t.checkPathao() }
-                    HStack(spacing: 8) {
+                    Flow(spacing: 8) {
                         if t.running { SecondaryButton("Pause") { t.pause() } } else { PrimaryButton("Start") { t.start() } }
                         SecondaryButton("Saved → Next", enabled: t.cur != nil) { t.markSaved() }
                         LinkButton("Skip") { t.skip() }
@@ -115,7 +116,7 @@ struct PathaoScreen: View {
                     if let item = t.cur, let o = item.order {
                         CurrentOrder(item: item, order: o).id(item.id.uuidString + o.code + o.phone)
                     }
-                    HStack(spacing: 16) {
+                    Flow(spacing: 16) {
                         LinkButton(showList ? "Hide list" : "Show list") { showList.toggle() }
                         LinkButton(showLog ? "Hide log" : "Show log") { showLog.toggle() }
                         if t.listName == "pasted list" { LinkButton("Copy list") { copyText(t.listText) } }
@@ -177,7 +178,7 @@ private struct CurrentOrder: View {
                 LabeledField(label: "Phone 2", text: $phone2, keyboard: .phonePad)
             }
             LabeledField(label: "Address", text: $address)
-            HStack(spacing: 12) {
+            Flow(spacing: 12) {
                 PrimaryButton("Fill again") {
                     var o = order
                     o.name = name

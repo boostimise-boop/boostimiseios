@@ -172,6 +172,12 @@ if (!window.__bmHooked) {
     private(set) var waiting = false
     private(set) var state = "Open your code list, log in to Pathao below, then press Start."
     var attention = ""
+    /// The controls folded into one slim bar, so the Pathao page gets the screen (remembered).
+    private(set) var compact: Bool
+    func fold(_ on: Bool) {
+        compact = on
+        prefs.set("compact", on)
+    }
     var lookbackDays: Int
     var writePhone: Bool
     var startFromBottom: Bool
@@ -201,6 +207,7 @@ if (!window.__bmHooked) {
         lookbackDays = p.int("lookback_days", 30)
         writePhone = p.bool("write_phone_to_list", true)
         startFromBottom = p.bool("start_from_bottom", true)
+        compact = p.bool("compact", false)
         chatNames = Self.shopChatNames()
     }
 
@@ -257,6 +264,7 @@ if (!window.__bmHooked) {
         cur = nil
         running = false
         waiting = false
+        attention = codes.isEmpty ? "The list has no codes (a line holding just a code, e.g. 5-401)." : ""
         state = "\(codes.count) codes loaded (\(items.filter { $0.status == Self.SAVED_EARLIER }.count) saved earlier). Press Start."
     }
 
@@ -596,7 +604,7 @@ if (!window.__bmHooked) {
     /// stay as they are.
     func checkPathao() {
         if items.isEmpty {
-            state = "Open or paste your code list first."
+            needList()
             return
         }
         if checking { return }
@@ -725,9 +733,16 @@ if (!window.__bmHooked) {
 
     // MARK: - the flow
 
+    /// Start / Check Pathao without a list: say so where it is seen (the "NEEDS YOU" card), and unfold
+    /// the controls so Open list / Paste list are on screen.
+    private func needList() {
+        attention = "No code list yet. Tap Open list or Paste list first."
+        fold(false)
+    }
+
     func start() {
         if items.isEmpty {
-            state = "Open or paste your code list first."
+            needList()
             return
         }
         saveSettings()

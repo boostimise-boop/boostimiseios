@@ -99,51 +99,20 @@ struct PathaoScreen: View {
 
     var body: some View {
         let t = Tools.pathao
-        VStack(spacing: 0) {
-            // the controls: at most about half of the screen, the Pathao page below
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    WaBanner()
-                    PathaoControl(t: t)
-                    // the buttons wrap on a narrow screen instead of being squeezed
-                    Flow(spacing: 8) {
-                        SecondaryButton("Open list") { importing = true }
-                        SecondaryButton("Paste list") { if let p = pasteText() { t.pasteList(p) } }
-                        LinkButton("Settings") { settings = true }
-                    }
-                    if let item = t.cur, let o = item.order {
-                        CurrentOrder(item: item, order: o).id(item.id.uuidString + o.code + o.phone)
-                    }
-                    Flow(spacing: 16) {
-                        LinkButton(showList ? "Hide list" : "Show list") { showList.toggle() }
-                        LinkButton(showLog ? "Hide log" : "Show log") { showLog.toggle() }
-                        if t.listName == "pasted list" { LinkButton("Copy list") { copyText(t.listText) } }
-                    }
-                    if showList {
-                        Card(title: "Codes", hint: t.listName.isEmpty ? nil : t.listName, icon: "list.bullet", tint: .neutral) {
-                            VStack(spacing: 0) {
-                                ForEach(t.items) { it in
-                                    StatusRow(kind: pathaoKind(it.status), code: it.code, status: it.status) {
-                                        if !t.running && [PathaoTool.NOT_FOUND, PathaoTool.SKIPPED, PathaoTool.PENDING].contains(it.status) {
-                                            LinkButton("Do now") { t.reread(it) }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if showLog {
-                        ForEach(Array(t.log.lines.suffix(60).enumerated()), id: \.offset) { _, l in
-                            Text(l).font(.system(size: 11)).foregroundStyle(Brand.navy)
-                        }
-                    }
+        GeometryReader { geo in
+            VStack(spacing: 0) {
+                if t.compact {
+                    // folded: one slim bar, the Pathao page gets the rest of the screen
+                    PathaoBar(t: t)
+                } else {
+                    // the controls: at most half of the screen (less on a small iPhone), the Pathao page below
+                    ScrollView { controls(t) }
+                        .frame(maxHeight: min(400, geo.size.height * 0.5))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(12)
+                Divider()
+                WebViewHost { t.view() }
             }
-            .frame(maxHeight: 400)
-            .fixedSize(horizontal: false, vertical: true)
-            Divider()
-            WebViewHost { t.view() }
         }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.plainText, .text]) { r in
             if case .success(let url) = r {
@@ -151,6 +120,49 @@ struct PathaoScreen: View {
             }
         }
         .sheet(isPresented: $settings) { PathaoSettings(t: t) }
+    }
+
+    private func controls(_ t: PathaoTool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                WaBanner().frame(maxWidth: .infinity, alignment: .leading)
+                LinkButton("Hide ▴") { t.fold(true) }
+            }
+            PathaoControl(t: t)
+            // the buttons wrap on a narrow screen instead of being squeezed
+            Flow(spacing: 8) {
+                SecondaryButton("Open list") { importing = true }
+                SecondaryButton("Paste list") { if let p = pasteText() { t.pasteList(p) } }
+                LinkButton("Settings") { settings = true }
+            }
+            if let item = t.cur, let o = item.order {
+                CurrentOrder(item: item, order: o).id(item.id.uuidString + o.code + o.phone)
+            }
+            Flow(spacing: 16) {
+                LinkButton(showList ? "Hide list" : "Show list") { showList.toggle() }
+                LinkButton(showLog ? "Hide log" : "Show log") { showLog.toggle() }
+                if t.listName == "pasted list" { LinkButton("Copy list") { copyText(t.listText) } }
+            }
+            if showList {
+                Card(title: "Codes", hint: t.listName.isEmpty ? nil : t.listName, icon: "list.bullet", tint: .neutral) {
+                    VStack(spacing: 0) {
+                        ForEach(t.items) { it in
+                            StatusRow(kind: pathaoKind(it.status), code: it.code, status: it.status) {
+                                if !t.running && [PathaoTool.NOT_FOUND, PathaoTool.SKIPPED, PathaoTool.PENDING].contains(it.status) {
+                                    LinkButton("Do now") { t.reread(it) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if showLog {
+                ForEach(Array(t.log.lines.suffix(60).enumerated()), id: \.offset) { _, l in
+                    Text(l).font(.system(size: 11)).foregroundStyle(Brand.navy)
+                }
+            }
+        }
+        .padding(12)
     }
 }
 
@@ -202,9 +214,41 @@ private struct PathaoControl: View {
             HeroButton("Saved → Next", icon: "checkmark.circle", enabled: t.cur != nil) { t.markSaved() }
             HeroButton("Skip", icon: "forward.end") { t.skip() }
             // which codes of the list already have a Pathao order (by Merchant Order ID); the phone is written in the list
+            // tappable without a list too: it then says to open one, instead of looking dead
             HeroButton(t.checking ? "Checking Pathao…" : "Check Pathao", icon: "magnifyingglass",
-                       enabled: !t.checking && !t.items.isEmpty) { t.checkPathao() }
+                       enabled: !t.checking) { t.checkPathao() }
         }
+    }
+}
+
+/// The folded controls: the current code or what to do, and the run's buttons as links.
+private struct PathaoBar: View {
+    let t: PathaoTool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(t.cur.map { "\($0.code) · \($0.status)" } ?? t.state)
+                .font(.system(size: 13)).foregroundStyle(Brand.navy).lineLimit(1)
+            if !t.attention.isEmpty { Hint(t.attention, Brand.error) }
+            HStack(spacing: 8) {
+                Flow(spacing: 14) {
+                    if t.running {
+                        LinkButton("Pause") { t.pause() }
+                    } else {
+                        LinkButton("Start") { t.start() }
+                    }
+                    LinkButton("Saved → Next") { t.markSaved() }.disabled(t.cur == nil)
+                    LinkButton("Skip") { t.skip() }
+                    LinkButton(t.checking ? "Checking…" : "Check Pathao") { t.checkPathao() }.disabled(t.checking)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                LinkButton("Show ▾") { t.fold(false) }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white)
     }
 }
 

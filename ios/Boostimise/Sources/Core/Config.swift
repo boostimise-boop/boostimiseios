@@ -9,7 +9,30 @@ enum Config {
 
     static let supabaseURL = "https://pfdpgttxobqcirfzgrjo.supabase.co"
     static let supabaseKey = "sb_publishable_2kuJo7V-RnyDYp6mNTDvdA_UH-R0bJT"
-    static let apiBase = "https://bmapi.boostimise.com"
+    static let defaultApiBase = "https://bmapi.boostimise.com"
+
+    // The enhancement server comes from Supabase (app_settings.api_base, set with `npm run set-api` in
+    // the admin folder), so a new server needs no new app. defaultApiBase until it has been read.
+    private static let apiLock = NSLock()
+    private static var _apiBase = defaultApiBase
+    private static var apiCheckedAt: Date?
+    static var apiBase: String { apiLock.lock(); defer { apiLock.unlock() }; return _apiBase }
+
+    /// Reads app_settings.api_base when the last read is older than `maxAge` seconds; keeps the
+    /// current address when Supabase can't be reached.
+    @discardableResult
+    static func refreshApiBase(maxAge: TimeInterval = 60) async -> String {
+        apiLock.lock()
+        let fresh = apiCheckedAt.map { Date().timeIntervalSince($0) < maxAge } ?? false
+        apiLock.unlock()
+        if fresh { return apiBase }
+        guard let rows = try? await Supabase.select("app_settings", "select=api_base&id=eq.1") else { return apiBase }
+        let value = rows.first?.strOrNil("api_base")?.trimmingCharacters(in: .whitespaces) ?? ""
+        var base = value.isEmpty ? defaultApiBase : value
+        while base.hasSuffix("/") { base.removeLast() }
+        apiLock.lock(); _apiBase = base; apiCheckedAt = Date(); apiLock.unlock()
+        return base
+    }
 
     // Google sign-in comes back to a tiny web server in the app on this address, the same one the
     // Windows and Android apps use, so it is already in Supabase's Redirect URLs.

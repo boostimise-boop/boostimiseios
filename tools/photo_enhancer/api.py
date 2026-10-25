@@ -1,4 +1,4 @@
-"""Client for the AI enhancement server (bmapi.boostimise.com) - the website's lib/api.ts.
+"""Client for the AI enhancement server (address from core.config.api_base()) - the website's lib/api.ts.
 Blocking calls: run them with core.net.run_bg()."""
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from core import net
-from core.config import API_BASE
+from core.config import api_base, refresh_api_base
 
 MODES = ("auto", "face", "restore", "upscale")
 FACE_MODELS = ("auto", "codeformer", "gfpgan", "compare")
@@ -50,32 +50,33 @@ def _js_bool(v: bool) -> str:
 
 
 def get_health() -> dict:
-    return net.get_json(f"{API_BASE}/api/health", timeout=10)
+    refresh_api_base(0)  # a health check is the moment to notice a new server
+    return net.get_json(f"{api_base()}/api/health", timeout=10)
 
 
 def get_gpu() -> dict:
-    return net.get_json(f"{API_BASE}/api/gpu", timeout=10)
+    return net.get_json(f"{api_base()}/api/gpu", timeout=10)
 
 
 def analyze_image(path: Path, name: str, scale: int) -> dict:
     """AI analysis + recommended settings for one photo (synchronous on the server)."""
     body = net.Multipart([("scale", str(scale))], "image", name, path, content_type(path))
-    return net.post_multipart(f"{API_BASE}/api/analyze", body, timeout=120).json()
+    return net.post_multipart(f"{api_base()}/api/analyze", body, timeout=120).json()
 
 
 def get_jobs(ids: list[str]) -> dict:
     """Status of many jobs in one request: {"jobs": [...], "missing": [...]}."""
     q = urllib.parse.quote(",".join(ids), safe="")
-    return net.get_json(f"{API_BASE}/api/jobs?ids={q}", timeout=15)
+    return net.get_json(f"{api_base()}/api/jobs?ids={q}", timeout=15)
 
 
 def cancel_job(job_id: str):
     """Cancels a running job, or deletes a finished one's results (best effort, in the background)."""
-    net.run_bg(lambda: net.request("DELETE", f"{API_BASE}/api/job/{job_id}", timeout=15), None, lambda e: None)
+    net.run_bg(lambda: net.request("DELETE", f"{api_base()}/api/job/{job_id}", timeout=15), None, lambda e: None)
 
 
 def result_url(job: dict, kind: str) -> str:
-    return f"{API_BASE}{(job.get('urls') or {}).get(kind, '')}"
+    return f"{api_base()}{(job.get('urls') or {}).get(kind, '')}"
 
 
 def content_type(path: Path) -> str:
@@ -96,7 +97,8 @@ def submit_enhance(path: Path, name: str, s: EnhanceSettings, on_upload: Callabl
     if s.sharpen is not None:
         fields.append(("sharpen", f"{s.sharpen:.2f}"))
     body = net.Multipart(fields, "image", name, path, content_type(path), on_upload, cancel)
-    resp = net.post_multipart(f"{API_BASE}/api/enhance", body, timeout=120)
+    refresh_api_base()
+    resp = net.post_multipart(f"{api_base()}/api/enhance", body, timeout=120)
     data = resp.json() or {}
     if resp.status != 202 or not data.get("job_id"):
         raise net.HttpError(resp.status, "http_error", f"Upload failed ({resp.status})", data)
@@ -116,7 +118,7 @@ def download_result(job: dict, kind: str, folder: Path, on_progress=None) -> Pat
 def download_zip(job_ids: list[str], fmt: str, folder: Path, on_progress=None) -> Path:
     """One ZIP with all finished results (ids in a form body, so batches of hundreds fit)."""
     body = net.form_body([("ids", ",".join(job_ids)), ("format", fmt)])
-    return net.download(f"{API_BASE}/api/download-zip", folder, f"enhanced_photos_{len(job_ids)}_{fmt}.zip",
+    return net.download(f"{api_base()}/api/download-zip", folder, f"enhanced_photos_{len(job_ids)}_{fmt}.zip",
                         method="POST", body=body, headers={"Content-Type": "application/x-www-form-urlencoded"},
                         on_progress=on_progress, timeout=600)
 

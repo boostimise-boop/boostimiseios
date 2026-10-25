@@ -30,9 +30,9 @@ func presetFor(_ mode: String, _ s: EnhanceSettings) -> EnhanceSettings {
     return o
 }
 
-/// Client for the AI enhancement server (bmapi.boostimise.com) - tools/photo_enhancer/api.py.
+/// Client for the AI enhancement server (Config.apiBase) - tools/photo_enhancer/api.py.
 enum EnhancerApi {
-    static let base = Config.apiBase
+    static var base: String { Config.apiBase }
     static let accepted = ["jpg", "jpeg", "png", "webp"]
 
     static func contentType(_ name: String) -> String {
@@ -44,7 +44,8 @@ enum EnhancerApi {
     }
 
     static func health() async throws -> JSON? {
-        try await Http.getJson("\(base)/api/health") as? JSON
+        await Config.refreshApiBase(maxAge: 0)  // a health check is the moment to notice a new server
+        return try await Http.getJson("\(base)/api/health") as? JSON
     }
 
     static func analyze(_ file: URL, _ name: String, scale: Int) async throws -> JSON? {
@@ -87,6 +88,7 @@ enum EnhancerApi {
         if let d = s.denoise { m.field("denoise", num(d)) }
         if let sh = s.sharpen { m.field("sharpen", num(sh)) }
         m.file("image", filename: name, type: contentType(name), content: try Data(contentsOf: file))
+        await Config.refreshApiBase()
         var req = Http.request("\(base)/api/enhance", method: "POST")
         req.setValue(m.contentType, forHTTPHeaderField: "Content-Type")
         let body = m.finish()

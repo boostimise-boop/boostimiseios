@@ -35,9 +35,9 @@ fun presetFor(mode: String, s: EnhanceSettings): EnhanceSettings = when (mode) {
     else -> s.copy(mode = mode, faceEnhance = true, colorEnhance = true, strength = 0.8)
 }
 
-/** Client for the AI enhancement server (bmapi.boostimise.com) - tools/photo_enhancer/api.py. */
+/** Client for the AI enhancement server (Config.apiBase) - tools/photo_enhancer/api.py. */
 object EnhancerApi {
-    private val base = Config.API_BASE
+    private val base get() = Config.apiBase
     val ACCEPTED = listOf("jpg", "jpeg", "png", "webp")
 
     fun contentType(name: String) = when (name.substringAfterLast('.', "").lowercase()) {
@@ -46,7 +46,10 @@ object EnhancerApi {
         else -> "image/jpeg"
     }
 
-    suspend fun health(): JSONObject? = Http.getJson("$base/api/health") as? JSONObject
+    suspend fun health(): JSONObject? {
+        Config.refreshApiBase(0)  // a health check is the moment to notice a new server
+        return Http.getJson("$base/api/health") as? JSONObject
+    }
 
     suspend fun analyze(file: File, name: String, scale: Int): JSONObject? {
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
@@ -82,6 +85,7 @@ object EnhancerApi {
         s.denoise?.let { b.addFormDataPart("denoise", "%.2f".format(java.util.Locale.US, it)) }
         s.sharpen?.let { b.addFormDataPart("sharpen", "%.2f".format(java.util.Locale.US, it)) }
         b.addFormDataPart("image", name, Http.ProgressFileBody(file, contentType(name), onUpload))
+        Config.refreshApiBase()
         val (status, text) = Http.send(Request.Builder().url("$base/api/enhance").post(b.build()).build())
         val data = Http.parseJson(text) as? JSONObject ?: JSONObject()
         if (status != 202 || data.optString("job_id").isEmpty()) throw HttpError(status, "http_error", "Upload failed ($status)", data)

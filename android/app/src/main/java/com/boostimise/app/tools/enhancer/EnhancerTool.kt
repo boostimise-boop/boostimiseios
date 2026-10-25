@@ -422,7 +422,7 @@ class EnhancerTool(private val scope: CoroutineScope) {
             downloading = "zip"
             try {
                 val tmp = File(Storage.app.cacheDir, "zip-${System.nanoTime()}")
-                val name = EnhancerApi.download("${com.boostimise.app.core.Config.API_BASE}/api/download-zip", tmp,
+                val name = EnhancerApi.download("${com.boostimise.app.core.Config.apiBase}/api/download-zip", tmp,
                     "enhanced_photos_${ids.size}_$fmt.zip", form = mapOf("ids" to ids.joinToString(","), "format" to fmt))
                 Storage.saveStream(Storage.downloadsPath(), name) { os -> tmp.inputStream().use { s -> s.copyTo(os) } }
                 tmp.delete()

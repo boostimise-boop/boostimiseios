@@ -418,7 +418,10 @@ object Account {
             liveTick++
             // releases / access changed in the admin panel ping app_settings; not on every row: each
             // check-in sets the profile's last_seen_at, whose change would start the next check
-            if (table == "app_settings") AppGuard.soon()
+            if (table == "app_settings") {
+                AppGuard.soon()
+                scope.launch { Config.refreshApiBase(0) }  // the enhancement server may have moved
+            }
             reloadJob?.cancel()
             reloadJob = scope.launch {
                 delay(400)

@@ -15,6 +15,23 @@ object Config {
     const val SUPABASE_KEY = "sb_publishable_2kuJo7V-RnyDYp6mNTDvdA_UH-R0bJT"
     const val API_BASE = "https://bmapi.boostimise.com"
 
+    // The enhancement server comes from Supabase (app_settings.api_base, set with `npm run set-api` in
+    // the admin folder), so a new server needs no new app. API_BASE until it has been read.
+    @Volatile var apiBase: String = API_BASE
+        private set
+    @Volatile private var apiCheckedAt = 0L
+
+    /** Reads app_settings.api_base when the last read is older than [maxAgeMs]; keeps the current
+     *  address when Supabase can't be reached. */
+    suspend fun refreshApiBase(maxAgeMs: Long = 60_000): String {
+        if (apiCheckedAt != 0L && System.nanoTime() / 1_000_000 - apiCheckedAt < maxAgeMs) return apiBase
+        val row = runCatching { Supabase.select("app_settings", "select=api_base&id=eq.1").firstOrNull() }
+            .getOrElse { return apiBase }
+        apiCheckedAt = System.nanoTime() / 1_000_000
+        apiBase = (row?.optStr("api_base")?.takeIf { it.isNotBlank() } ?: API_BASE).trim().trimEnd('/')
+        return apiBase
+    }
+
     // Google sign-in comes back to a tiny web server in the app on this address, the same one the
     // Windows app uses, so it is already in Supabase's Redirect URLs (no new setting is needed).
     const val AUTH_PORT = 53214

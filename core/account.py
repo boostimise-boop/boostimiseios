@@ -34,7 +34,7 @@ from typing import Any
 from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QImage
 
-from . import net, supabase
+from . import config, net, supabase
 from .config import AUTH_PORT, AUTH_REDIRECT
 from .paths import data_dir
 from .realtime import RealtimeChannel
@@ -660,6 +660,8 @@ class Account(QObject):
         self.changed.emit()
 
     def _on_live_change(self, table: str):
+        if table == "app_settings":  # the enhancement server may have moved (npm run set-api)
+            net.run_bg(lambda: config.refresh_api_base(0), None, lambda e: None)
         self.table_changed.emit(table)
         self.live_tick += 1
         self.live.emit(self.live_tick)

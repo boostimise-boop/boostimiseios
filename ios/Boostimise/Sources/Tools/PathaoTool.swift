@@ -216,8 +216,19 @@ if (!window.__bmHooked) {
         Shop.shared.chats.sorted { $0.key < $1.key }.map { ChatName(prefix: $0.key, name: $0.value) }
     }
 
-    /// Shows the shop's chats again (they may have been changed in Shop settings or another app).
-    func loadChatNames() { chatNames = Self.shopChatNames() }
+    /// Shows the shop's chats again (they may have been changed in Shop settings or another app), and a row
+    /// for each code group of the list that has none yet: the WhatsApp chat named like "(5-)" if there is one.
+    func loadChatNames() {
+        var names = Self.shopChatNames()
+        var have = Set(names.map { $0.prefix })
+        for it in items {
+            let p = OrderParser.splitCode(it.code).0
+            guard !p.isEmpty, have.insert(p).inserted else { continue }
+            let hit = WaEngine.shared.chats.first { $0.title.lowercased().contains("(\(p)-)") }
+            names.append(ChatName(prefix: p, name: hit?.title ?? chatFor(p)))
+        }
+        chatNames = names.sorted { $0.prefix < $1.prefix }
+    }
 
     func saveSettings() {
         var m: [String: String] = [:]
@@ -277,6 +288,9 @@ if (!window.__bmHooked) {
         if let v = web { return v }
         let cfg = WKWebViewConfiguration()
         cfg.websiteDataStore = .default()
+        // The app has WKAppBoundDomains (for WhatsApp), so iOS only lets the app run its scripts in a web view
+        // kept to those domains; without this every script on the Pathao page failed ("open merchant.pathao.com").
+        cfg.limitsNavigationsToAppBoundDomains = true
         let ucc = WKUserContentController()
         ucc.addUserScript(WKUserScript(source: "(function(){\(Self.jsHooks)})();void 0;", injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         cfg.userContentController = ucc
@@ -291,11 +305,19 @@ if (!window.__bmHooked) {
         return v
     }
 
+    /// Why the last script failed ("" when it ran), for the log.
+    @ObservationIgnored private var evalError = ""
+
     private func eval(_ js: String) async -> Any? {
-        guard let v = web else { return nil }
-        return await withCheckedContinuation { (cont: CheckedContinuation<Any?, Never>) in
-            v.evaluateJavaScript(js) { result, _ in cont.resume(returning: result) }
+        guard let v = web else {
+            evalError = "the Pathao page is not open"
+            return nil
         }
+        let (result, error) = await withCheckedContinuation { (cont: CheckedContinuation<(Any?, Error?), Never>) in
+            v.evaluateJavaScript(js) { result, error in cont.resume(returning: (result, error)) }
+        }
+        evalError = error?.localizedDescription ?? ""
+        return result
     }
 
     private func spec(_ key: String) -> String {
@@ -566,7 +588,9 @@ if (!window.__bmHooked) {
 
     /// Reads the orders the merchant panel lists (the Pathao page below must be open and logged in).
     private func readPathaoOrders() async throws -> [PathaoOrder] {
-        guard let host = await eval("location.hostname") as? String, host.hasSuffix("pathao.com") else {
+        let host = await eval("location.hostname") as? String
+        guard let host, host.hasSuffix("pathao.com") else {
+            if host == nil && !evalError.isEmpty { log.add("Could not read the Pathao page: \(evalError)") }
             throw NeedUser("Open merchant.pathao.com in the page below and log in, then tap Check Pathao again.")
         }
         let today = Date()
@@ -884,8 +908,20 @@ if (!window.__bmHooked) {
     }
 }
 
-/// Pathao stays in its view; other sites (help links) open in Safari.
+/// Pathao stays in its view; other sites (help links) open in Safari, as the view is kept to the app-bound domains.
 final class PathaoDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+        if let url = navigationAction.request.url, navigationAction.targetFrame?.isMainFrame ?? true,
+           ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+           !(url.host?.lowercased() ?? "").hasSuffix("pathao.com") {
+            UIApplication.shared.open(url)
+            decisionHandler(.cancel)
+            return
+        }
+        decisionHandler(.allow)
+    }
+
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         // target=_blank: open it in the same view

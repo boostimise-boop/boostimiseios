@@ -308,6 +308,8 @@ private struct PathaoSettings: View {
     let t: PathaoTool
     @Environment(\.dismiss) private var dismiss
     @State private var newPrefix = ""
+    /// The group whose WhatsApp chat is being chosen.
+    @State private var picking: UUID?
 
     var body: some View {
         @Bindable var t = self.t
@@ -318,6 +320,7 @@ private struct PathaoSettings: View {
                         HStack {
                             Text("\(c.prefix)-").frame(width: 44, alignment: .leading).foregroundStyle(Brand.text2)
                             TextField("Chat name", text: $c.name).autocorrectionDisabled()
+                            Button("Choose") { picking = c.id }.buttonStyle(.borderless)
                         }
                     }
                     HStack {
@@ -333,7 +336,8 @@ private struct PathaoSettings: View {
                 } header: {
                     Text("The WhatsApp chat of each code group")
                 } footer: {
-                    Text("The same as in Shop settings and your other Boostimise apps.")
+                    Text("Tap Choose to pick the WhatsApp chat the orders of that group are read from. "
+                         + "The same as in Shop settings and your other Boostimise apps.")
                 }
                 Section {
                     NumberField(label: "Read order messages of the last", value: $t.lookbackDays, range: 1...365, suffix: "days")
@@ -341,8 +345,17 @@ private struct PathaoSettings: View {
                     CheckRow("After a save, write the phone next to the code in the list", $t.writePhone)
                 }
             }
+            .sheet(isPresented: Binding(get: { picking != nil }, set: { if !$0 { picking = nil } })) {
+                ChatPickerSheet(filters: false) { f in
+                    if let i = t.chatNames.firstIndex(where: { $0.id == picking }) { t.chatNames[i].name = f.title }
+                }
+            }
             .navigationTitle("Pathao Auto-fill settings")
-            .onAppear { t.loadChatNames() }
+            .onAppear {
+                t.loadChatNames()
+                // the chats to choose from
+                if WaEngine.shared.isReady && WaEngine.shared.chats.isEmpty { Task { try? await WaEngine.shared.refreshChats() } }
+            }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
